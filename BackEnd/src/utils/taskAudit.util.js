@@ -1,0 +1,416 @@
+const Comment = require('../model/Comment.model');
+const TaskHistory = require('../model/TaskHistory.model');
+const Task = require('../model/Task.model');
+
+const ensureString = (value, fallback = 'system') => {
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+    return String(value);
+};
+
+const normaliseEmail = (email) => (typeof email === 'string' ? email.trim().toLowerCase() : '');
+
+const formatStatus = (status) => {
+    if (!status) return 'Unknown';
+    return status
+        .toString()
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const normaliseRole = (role) => ensureString(role, '').toLowerCase();
+
+const getActorInfo = (req = {}) => {
+    const user = req.user || {};
+    const body = req.body || {};
+    const actorPayload = body.actor || {};
+
+    const actorId = ensureString(
+        user.id || user._id || user.userId || body.userId || actorPayload.id || actorPayload.userId,
+        'system'
+    );
+
+    const actorName = user.name || body.userName || actorPayload.userName || 'System';
+    const actorEmail = user.email || body.userEmail || actorPayload.userEmail || 'system@task-app.local';
+    const actorRole = user.role || body.userRole || actorPayload.userRole || 'system';
+
+    return {
+        id: ensureString(actorId, 'system'),
+        name: actorName,
+        email: actorEmail,
+        role: actorRole
+    };
+};
+
+const getTaskEmail = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && value.email) return value.email;
+    return '';
+};
+
+const buildStatusMessage = ({ actor, oldStatus, newStatus, note, extraContext }) => {
+    let message = `${actor.name} (${actor.role}) changed task status from "${formatStatus(oldStatus)}" to "${formatStatus(newStatus)}".`;
+
+    if (extraContext) {
+        message += ` ${extraContext}`;
+    }
+
+    if (note) {
+        message += ` Note: ${note}`;
+    }
+
+    return message;
+};
+
+const buildStatusComment = ({ actor, oldStatus, newStatus, note, extraContext }) => {
+    const parts = [
+        `Status: ${formatStatus(oldStatus)} → ${formatStatus(newStatus)}`,
+        `By: ${actor.name}${actor.role ? ` (${actor.role})` : ''}`
+    ];
+
+    if (extraContext) {
+        parts.push(extraContext);
+    }
+
+    if (note) {
+        parts.push(`Note: ${note}`);
+    }
+
+    return parts.join(' | ');
+};
+
+const buildApprovalMessage = ({ actor, granted, note, isAdmin, isAssigner }) => {
+    let message;
+
+    if (isAdmin) {
+        message = granted
+            ? `Admin ${actor.name} approved the task completion.`
+            : `Admin ${actor.name} rejected the task completion.`;
+    } else if (isAssigner) {
+        message = granted
+            ? `Assigner ${actor.name} permanently approved the task.`
+            : `Assigner ${actor.name} removed the permanent approval.`;
+    } else {
+        message = granted
+            ? `${actor.name} granted completion approval.`
+            : `${actor.name} revoked completion approval.`;
+    }
+
+    if (note) {
+        message += ` Note: ${note}`;
+    }
+
+    return message;
+};
+
+const buildApprovalComment = ({ actor, granted, note, isAdmin, isAssigner }) => {
+    const actionText = granted
+        ? (isAdmin ? 'Admin approval granted' : isAssigner ? 'Permanent approval granted' : 'Approval granted')
+        : (isAdmin ? 'Admin approval revoked' : isAssigner ? 'Permanent approval removed' : 'Approval revoked');
+
+    const parts = [
+        actionText,
+        `By: ${actor.name}${actor.role ? ` (${actor.role})` : ''}`
+    ];
+
+    if (note) {
+        parts.push(`Note: ${note}`);
+    }
+
+    return parts.join(' | ');
+};
+
+const createHistoryAndComment = async ({
+    taskId,
+    actor,
+    action,
+    message,
+    oldStatus,
+    newStatus,
+    note,
+    commentContent,
+    additionalData
+}) => {
+    const now = Date.now();
+    const recentWindowMs = 5000;
+    const since = new Date(now - recentWindowMs);
+
+    const userEmail = ensureString(actor.email, 'system@task-app.local');
+    const historyQuery = {
+        taskId,
+        action,
+        message,
+        'user.userEmail': userEmail,
+        timestamp: { $gte: since }
+    };
+
+    let history = await TaskHistory.findOne(historyQuery).lean();
+    if (!history) {
+        history = await TaskHistory.create({
+            taskId,
+            action,
+            message,
+            oldStatus: oldStatus || null,
+            newStatus: newStatus || null,
+            note: note || '',
+            additionalData: additionalData || null,
+            userId: actor.id,
+            user: {
+                userId: actor.id,
+                userName: actor.name,
+                userEmail: userEmail,
+                userRole: actor.role
+            }
+        });
+    }
+
+    const content = commentContent || message;
+    const commentQuery = {
+        taskId,
+        content,
+        userEmail,
+        autoGenerated: true,
+        createdAt: { $gte: since }
+    };
+
+    let comment = await Comment.findOne(commentQuery).lean();
+    if (!comment) {
+        comment = await Comment.create({
+            taskId,
+            content,
+            userId: actor.id,
+            userName: actor.name,
+            userEmail,
+            userRole: actor.role,
+            autoGenerated: true
+        });
+    }
+
+    await Task.findByIdAndUpdate(taskId, {
+        $addToSet: {
+            comments: comment._id,
+            history: history._id
+        },
+        updatedAt: Date.now()
+    });
+
+    return { history, comment };
+};
+
+const recordStatusChange = async ({
+    req,
+    previousTask,
+    updatedTask,
+    note = '',
+    actionHint,
+    requestRecheck = false
+}) => {
+    if (!previousTask || !updatedTask) return null;
+
+    const oldStatus = previousTask.status;
+    const newStatus = updatedTask.status;
+
+    if (!newStatus || oldStatus === newStatus) {
+        return null;
+    }
+
+    const actor = getActorInfo(req);
+    const actorEmail = normaliseEmail(actor.email);
+    const assignedToEmail = normaliseEmail(getTaskEmail(previousTask.assignedTo));
+    const assignedByEmail = normaliseEmail(getTaskEmail(previousTask.assignedBy));
+
+    const isAdmin = normaliseRole(actor.role) === 'admin';
+    const isAssigner = actorEmail && assignedByEmail && actorEmail === assignedByEmail;
+    const isAssignee = actorEmail && assignedToEmail && actorEmail === assignedToEmail;
+
+    let action = actionHint;
+    let extraContext = '';
+
+    if (!action) {
+        if (requestRecheck && isAssigner) {
+            action = 'assigner_recheck_requested';
+            extraContext = 'Assigner requested a re-check.';
+        } else if (newStatus === 'completed') {
+            if (isAdmin) action = 'status_completed_by_admin';
+            else if (isAssigner) action = 'status_completed_by_assigner';
+            else action = 'status_completed_by_assignee';
+        } else if (newStatus === 'pending') {
+            if (isAdmin) action = 'status_pending_by_admin';
+            else if (isAssigner) action = 'status_pending_by_assigner';
+            else action = 'status_pending_by_assignee';
+        } else {
+            action = 'status_changed';
+        }
+    }
+
+    if (!extraContext && requestRecheck && isAssigner) {
+        extraContext = 'Assigner requested a re-check.';
+    }
+
+    const message = buildStatusMessage({
+        actor,
+        oldStatus,
+        newStatus,
+        note,
+        extraContext
+    });
+
+    const commentContent = buildStatusComment({
+        actor,
+        oldStatus,
+        newStatus,
+        note,
+        extraContext
+    });
+
+    return createHistoryAndComment({
+        taskId: updatedTask._id,
+        actor,
+        action,
+        message,
+        oldStatus,
+        newStatus,
+        note,
+        commentContent
+    });
+};
+
+const recordApprovalChange = async ({
+    req,
+    previousTask,
+    updatedTask,
+    note = '',
+    actionHint
+}) => {
+    if (!previousTask || !updatedTask) return null;
+
+    const previousApproval = Boolean(previousTask.completedApproval);
+    const nextApproval = Boolean(updatedTask.completedApproval);
+
+    if (previousApproval === nextApproval) {
+        return null;
+    }
+
+    const actor = getActorInfo(req);
+    const actorEmail = normaliseEmail(actor.email);
+    const assignedByEmail = normaliseEmail(getTaskEmail(previousTask.assignedBy));
+
+    const isAdmin = normaliseRole(actor.role) === 'admin';
+    const isAssigner = actorEmail && assignedByEmail && actorEmail === assignedByEmail;
+
+    let action = actionHint;
+
+    if (!action) {
+        if (isAdmin) {
+            action = nextApproval ? 'admin_approved' : 'admin_rejected';
+        } else if (isAssigner) {
+            action = nextApproval ? 'assigner_permanent_approved' : 'permanent_approval_removed';
+        } else {
+            action = nextApproval ? 'approval_granted' : 'approval_revoked';
+        }
+    }
+
+    const message = buildApprovalMessage({
+        actor,
+        granted: nextApproval,
+        note,
+        isAdmin,
+        isAssigner
+    });
+
+    const commentContent = buildApprovalComment({
+        actor,
+        granted: nextApproval,
+        note,
+        isAdmin,
+        isAssigner
+    });
+
+    return createHistoryAndComment({
+        taskId: updatedTask._id,
+        actor,
+        action,
+        message,
+        oldStatus: previousTask.status,
+        newStatus: updatedTask.status,
+        note,
+        commentContent
+    });
+};
+
+const buildUpdateLines = (changes = {}) => {
+    const parts = [];
+    Object.entries(changes).forEach(([field, diff]) => {
+        if (!diff || typeof diff !== 'object') return;
+        const from = ensureString(diff.from, '');
+        const to = ensureString(diff.to, '');
+        parts.push(`${field}: "${from}" → "${to}"`);
+    });
+    return parts;
+};
+
+const recordTaskUpdate = async ({
+    req,
+    previousTask,
+    updatedTask,
+    changes,
+    note = ''
+}) => {
+    if (!previousTask || !updatedTask) return null;
+    const lines = buildUpdateLines(changes);
+    if (lines.length === 0) return null;
+
+    const actor = getActorInfo(req);
+    const role = normaliseRole(actor.role) || 'user';
+    const message = `${actor.name} (${role}) updated task. ${lines.join(' | ')}${note ? ` Note: ${note}` : ''}`;
+    const commentContent = `Updated: ${lines.join(' | ')} | By: ${actor.name}${role ? ` (${role})` : ''}${note ? ` | Note: ${note}` : ''}`;
+
+    return createHistoryAndComment({
+        taskId: updatedTask._id,
+        actor,
+        action: 'task_updated',
+        message,
+        oldStatus: previousTask.status,
+        newStatus: updatedTask.status,
+        note,
+        commentContent,
+        additionalData: { changes: changes || {} }
+    });
+};
+
+const recordTaskDeleted = async ({
+    req,
+    task,
+    note = ''
+}) => {
+    if (!task) return null;
+    const actor = getActorInfo(req);
+    const role = normaliseRole(actor.role) || 'user';
+    const message = `${actor.name} (${role}) deleted task.${note ? ` Note: ${note}` : ''}`;
+    const commentContent = `Deleted | By: ${actor.name}${role ? ` (${role})` : ''}${note ? ` | Note: ${note}` : ''}`;
+
+    return createHistoryAndComment({
+        taskId: task._id,
+        actor,
+        action: 'task_deleted',
+        message,
+        oldStatus: task.status,
+        newStatus: task.status,
+        note,
+        commentContent,
+        additionalData: {
+            deletedAt: new Date().toISOString(),
+            deletedBy: normaliseEmail(actor.email)
+        }
+    });
+};
+
+module.exports = {
+    recordStatusChange,
+    recordApprovalChange,
+    recordTaskUpdate,
+    recordTaskDeleted,
+    formatStatus
+};
