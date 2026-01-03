@@ -6,14 +6,20 @@ const app = express();
 const PORT = process.env.PORT || 9000;
 const cors = require("cors");
 
+const IS_VERCEL = Boolean(process.env.VERCEL);
+
 const allowedOrigins = new Set(
     String(process.env.CORS_ORIGINS || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
 );
+if (process.env.FRONTEND_URL) {
+    allowedOrigins.add(String(process.env.FRONTEND_URL).trim());
+}
 allowedOrigins.add('http://localhost:5173');
 allowedOrigins.add('http://localhost:9000');
+allowedOrigins.add('https://tms-frontend-wxyr.onrender.com');
 
 const corsOptions = {
     origin(origin, callback) {
@@ -36,23 +42,29 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api', require('./src/routes/index'))
 
 db.once('connected', () => {
-    const enabled = String(process.env.GOOGLE_TASKS_SYNC_ENABLED || 'true').toLowerCase() !== 'false';
+    const enabledDefault = IS_VERCEL ? 'false' : 'true';
+    const enabled = String(process.env.GOOGLE_TASKS_SYNC_ENABLED || enabledDefault).toLowerCase() !== 'false';
     if (!enabled) return;
 
     const intervalMinutes = Number(process.env.GOOGLE_TASKS_SYNC_INTERVAL_MINUTES || 5);
     startGoogleTasksStatusSync({ intervalMinutes });
 
-    const importEnabled = String(process.env.GOOGLE_TASKS_IMPORT_ENABLED || 'true').toLowerCase() !== 'false';
+    const importEnabledDefault = IS_VERCEL ? 'false' : 'true';
+    const importEnabled = String(process.env.GOOGLE_TASKS_IMPORT_ENABLED || importEnabledDefault).toLowerCase() !== 'false';
     if (!importEnabled) return;
 
     const importIntervalMinutes = Number(process.env.GOOGLE_TASKS_IMPORT_INTERVAL_MINUTES || 1);
     startGoogleTasksImportSync({ intervalMinutes: importIntervalMinutes });
 });
 
-app.listen(PORT,(error)=>{ 
-    if(error){
-        console.log("server not started")
-        return false;
-    }
-        console.log("server is starting")
-})
+if (!IS_VERCEL) {
+    app.listen(PORT,(error)=>{ 
+        if(error){
+            console.log("server not started")
+            return false;
+        }
+            console.log("server is starting")
+    })
+}
+
+module.exports = app;
