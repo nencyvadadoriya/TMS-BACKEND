@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Brand = require('../model/Brand.model');
 const Task = require('../model/Task.model');
 const User = require('../model/user.model');
+const TaskHistory = require('../model/TaskHistory.model');
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
@@ -74,6 +75,44 @@ const computeTaskStats = (tasks) => {
 };
 
 const normalizeString = (v) => (v || '').toString().trim();
+
+const formatTaskHistoryEntry = (entry) => ({
+  ...entry,
+  id: entry?._id,
+  userName: entry?.user?.userName || entry?.userName || 'System',
+  userEmail: entry?.user?.userEmail || entry?.userEmail || 'system@task-app.local',
+  userRole: entry?.user?.userRole || entry?.userRole || 'system',
+  timestamp: entry?.timestamp || entry?.createdAt || entry?.updatedAt
+});
+
+const withTaskHistory = async (tasks) => {
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (list.length === 0) return list;
+
+  const taskIds = list
+    .map(t => t?._id)
+    .filter(Boolean);
+
+  if (taskIds.length === 0) return list;
+
+  const allHistory = await TaskHistory.find({ taskId: { $in: taskIds } })
+    .sort({ timestamp: -1 })
+    .lean();
+
+  const byTaskId = new Map();
+  allHistory.forEach((h) => {
+    const key = h?.taskId ? String(h.taskId) : '';
+    if (!key) return;
+    const existing = byTaskId.get(key) || [];
+    existing.push(formatTaskHistoryEntry(h));
+    byTaskId.set(key, existing);
+  });
+
+  return list.map((t) => ({
+    ...t,
+    history: byTaskId.get(String(t._id)) || []
+  }));
+};
 
 const buildBrandPayload = (body) => {
   const name = normalizeString(body?.name);
@@ -265,14 +304,18 @@ exports.getBrandDetails = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to view this brand' });
     }
 
-    const tasks = await Task.find({
+    const rawTasks = await Task.find({
       $or: [
         { brandId: brand._id },
         { brand: brand.name },
         { companyName: brand.company },
         { company: brand.company }
       ]
-    }).sort({ createdAt: -1 }).lean();
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const tasks = await withTaskHistory(rawTasks);
 
     const collaborators = brand.collaborators || [];
     const activeCollaborators = collaborators.filter(c => c.status === 'accepted').length;
@@ -552,13 +595,16 @@ exports.getBrandById = async (req, res) => {
     }
 
     // Get tasks for this brand
-    const tasks = await Task.find({
+    const rawTasks = await Task.find({
       $or: [
         { brandId: brand._id },
         { brand: brand.name },
         { companyName: brand.company }
       ]
-    }).lean();
+    })
+      .lean();
+
+    const tasks = await withTaskHistory(rawTasks);
 
     // Calculate stats
     const stats = computeTaskStats(tasks);
