@@ -212,9 +212,9 @@ const listGoogleTasks = async ({
     tasklistId = '@default',
     pageToken,
     updatedMin,
-    showCompleted = true,
-    showDeleted = true,
-    showHidden = true,
+    showCompleted = false,
+    showDeleted = false,
+    showHidden = false,
     maxResults = 100
 }) => {
     const params = new URLSearchParams();
