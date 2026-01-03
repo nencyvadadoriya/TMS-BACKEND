@@ -1,7 +1,14 @@
 const Task = require('../model/Task.model');
 const User = require('../model/user.model');
 
-const { refreshAccessToken, getGoogleTask, updateGoogleTask, listGoogleTasks, listGoogleTaskLists } = require('./googleCalendar.util');
+const {
+    refreshAccessToken,
+    createGoogleTask,
+    getGoogleTask,
+    updateGoogleTask,
+    listGoogleTasks,
+    listGoogleTaskLists
+} = require('./googleCalendar.util');
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
@@ -67,6 +74,38 @@ const parseGoogleTaskNotesFields = (notes) => {
         assignedTo: assignedTo ? normalizeEmail(assignedTo) : null,
         assignedBy: assignedBy ? normalizeEmail(assignedBy) : null
     };
+};
+
+const buildGoogleTaskPayloadFromDbTask = ({ task }) => {
+    const descriptionParts = [
+        `Task: ${(task?.title || '').toString()}`,
+        task?.companyName ? `Company: ${(task.companyName || '').toString()}` : null,
+        task?.brand ? `Brand: ${(task.brand || '').toString()}` : null,
+        task?.priority ? `Priority: ${(task.priority || '').toString()}` : null,
+        task?.taskType ? `Task Type: ${(task.taskType || '').toString()}` : null,
+        task?.status ? `Status: ${(task.status || '').toString()}` : null,
+        task?.assignedBy ? `Assigned By: ${(task.assignedBy || '').toString()}` : null,
+        task?.assignedTo ? `Assigned To: ${(task.assignedTo || '').toString()}` : null
+    ].filter(Boolean);
+
+    const dueDate = task?.dueDate ? new Date(task.dueDate) : null;
+    const due = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.toISOString() : undefined;
+
+    const statusLower = String(task?.status || '').toLowerCase();
+    const googleStatus = statusLower === 'completed' ? 'completed' : 'needsAction';
+
+    const googleTask = {
+        title: (task?.title || '').toString(),
+        notes: descriptionParts.join('\n'),
+        ...(due ? { due } : {}),
+        status: googleStatus
+    };
+
+    if (googleStatus === 'completed') {
+        googleTask.completed = new Date().toISOString();
+    }
+
+    return googleTask;
 };
 
 const dedupeImportedGoogleTaskDocs = async ({ ownerEmail, googleTaskId }) => {
@@ -388,15 +427,16 @@ const runGoogleTasksImportForUserId = async ({ userId }) => {
                 tasklistId,
                 pageToken,
                 updatedMin,
-                showCompleted: true,
-                showDeleted: true,
-                showHidden: true,
+                showCompleted: false,
+                showDeleted: false,
+                showHidden: false,
                 maxResults: 100
             });
 
             const items = Array.isArray(page?.items) ? page.items : [];
             for (const googleTask of items) {
-                if (googleTask?.deleted) {
+                const statusLower = String(googleTask?.status || '').toLowerCase();
+                if (googleTask?.deleted || googleTask?.hidden || statusLower === 'completed') {
                     skippedDeleted += 1;
                     continue;
                 }
@@ -475,6 +515,83 @@ const runGoogleTasksImportForUserId = async ({ userId }) => {
     return { users: 1, imported, updated, skippedDeleted, failedUsers: 0 };
 };
 
+const runGoogleTasksPushForUserId = async ({ userId }) => {
+    if (!userId) {
+        throw new Error('Missing userId');
+    }
+
+    const user = await User.findById(userId)
+        .select('email isGoogleCalendarConnected googleOAuth.refreshToken googleOAuth.scope')
+        .lean();
+
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    const ownerEmail = normalizeEmail(user?.email);
+    const refreshToken = user?.isGoogleCalendarConnected ? user?.googleOAuth?.refreshToken : null;
+    const scopes = Array.isArray(user?.googleOAuth?.scope) ? user.googleOAuth.scope : [];
+
+    if (!ownerEmail || !refreshToken || !scopes.includes('https://www.googleapis.com/auth/tasks')) {
+        return { users: 1, pushed: 0, skipped: 0, failed: 0, failedUsers: 1 };
+    }
+
+    const accessToken = await getAccessTokenForRefreshToken(refreshToken);
+
+    const candidates = await Task.find({
+        isDeleted: { $ne: true },
+        'googleSync.taskId': null,
+        $or: [{ assignedBy: ownerEmail }, { assignedTo: ownerEmail }]
+    }).select('_id title dueDate status priority taskType companyName brand assignedTo assignedBy googleSync').lean();
+
+    let pushed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const task of candidates) {
+        const alreadySynced = Boolean(task?.googleSync?.taskId);
+        if (alreadySynced) {
+            skipped += 1;
+            continue;
+        }
+
+        try {
+            const googleTaskPayload = buildGoogleTaskPayloadFromDbTask({ task });
+            const created = await createGoogleTask({
+                accessToken,
+                tasklistId: task?.googleSync?.tasklistId || '@default',
+                task: googleTaskPayload
+            });
+
+            const googleUpdatedAt = created?.updated ? new Date(created.updated) : null;
+            await Task.findByIdAndUpdate(task._id, {
+                $set: {
+                    'googleSync.taskId': created?.id || null,
+                    'googleSync.tasklistId': task?.googleSync?.tasklistId || '@default',
+                    'googleSync.ownerEmail': ownerEmail,
+                    'googleSync.syncedAt': new Date(),
+                    'googleSync.googleUpdatedAt': (googleUpdatedAt && !Number.isNaN(googleUpdatedAt.getTime())) ? googleUpdatedAt : null,
+                    'googleSync.lastError': null
+                }
+            });
+
+            pushed += 1;
+        } catch (error) {
+            failed += 1;
+            const msg = error?.message || 'Google push failed';
+            await Task.findByIdAndUpdate(task._id, {
+                $set: {
+                    'googleSync.ownerEmail': ownerEmail,
+                    'googleSync.syncedAt': new Date(),
+                    'googleSync.lastError': msg
+                }
+            });
+        }
+    }
+
+    return { users: 1, pushed, skipped, failed, failedUsers: 0 };
+};
+
 const runGoogleTasksImportOnce = async () => {
     const users = await User.find({ isGoogleCalendarConnected: true })
         .select('email isGoogleCalendarConnected googleOAuth.refreshToken googleOAuth.scope googleOAuth.tasksLastPulledAt')
@@ -537,15 +654,16 @@ const runGoogleTasksImportOnce = async () => {
                     tasklistId,
                     pageToken,
                     updatedMin,
-                    showCompleted: true,
-                    showDeleted: true,
-                    showHidden: true,
+                    showCompleted: false,
+                    showDeleted: false,
+                    showHidden: false,
                     maxResults: 100
                 });
 
                 const items = Array.isArray(page?.items) ? page.items : [];
                 for (const googleTask of items) {
-                    if (googleTask?.deleted) {
+                    const statusLower = String(googleTask?.status || '').toLowerCase();
+                    if (googleTask?.deleted || googleTask?.hidden || statusLower === 'completed') {
                         skippedDeleted += 1;
                         continue;
                     }
@@ -653,5 +771,6 @@ module.exports = {
     runGoogleTasksStatusSyncOnce,
     startGoogleTasksImportSync,
     runGoogleTasksImportOnce,
-    runGoogleTasksImportForUserId
+    runGoogleTasksImportForUserId,
+    runGoogleTasksPushForUserId
 };
