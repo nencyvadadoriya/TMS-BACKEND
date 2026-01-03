@@ -175,6 +175,22 @@ const createCalendarEvent = async ({ accessToken, event }) => {
     return responseBody;
 };
 
+const deleteGoogleTask = async ({ accessToken, tasklistId = '@default', taskId }) => {
+    if (!taskId) {
+        throw new Error('Missing taskId');
+    }
+
+    const { body: responseBody } = await requestJson({
+        method: 'DELETE',
+        url: `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+        headers: {
+            Authorization: `Bearer ${accessToken}`
+        }
+    });
+
+    return responseBody;
+};
+
 const listGoogleTaskLists = async ({ accessToken, pageToken, maxResults = 100 } = {}) => {
     const params = new URLSearchParams();
     if (pageToken) params.set('pageToken', String(pageToken));
@@ -331,6 +347,7 @@ module.exports = {
     createGoogleTask,
     getGoogleTask,
     updateGoogleTask,
+    deleteGoogleTask,
     listGoogleTasks,
     listGoogleTaskLists,
     createTaskCalendarInvite

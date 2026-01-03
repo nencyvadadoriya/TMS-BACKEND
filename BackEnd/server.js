@@ -49,7 +49,7 @@ db.once('connected', () => {
     const intervalMinutes = Number(process.env.GOOGLE_TASKS_SYNC_INTERVAL_MINUTES || 5);
     startGoogleTasksStatusSync({ intervalMinutes });
 
-    const importEnabledDefault = IS_VERCEL ? 'false' : 'true';
+    const importEnabledDefault = 'false';
     const importEnabled = String(process.env.GOOGLE_TASKS_IMPORT_ENABLED || importEnabledDefault).toLowerCase() !== 'false';
     if (!importEnabled) return;
 

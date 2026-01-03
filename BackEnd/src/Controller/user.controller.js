@@ -664,6 +664,11 @@ exports.deleteUser = async (req, res) => {
                 { $set: { assignedTo: tombstoneEmail } }
             );
 
+            await Task.updateMany(
+                { assignedBy: originalEmail },
+                { $set: { assignedBy: tombstoneEmail } }
+            );
+
             await Brand.updateMany(
                 { 'collaborators.email': originalEmail },
                 { $set: { 'collaborators.$[c].email': tombstoneEmail, 'collaborators.$[c].status': 'removed' } },

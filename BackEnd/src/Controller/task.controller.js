@@ -5,7 +5,7 @@ const Brand = require('../model/Brand.model');
 const User = require('../model/user.model');
 const Comment = require('../model/Comment.model');
 const TaskHistory = require('../model/TaskHistory.model');
-const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask } = require('../utils/googleCalendar.util');
+const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
 const {
     recordStatusChange,
@@ -1646,9 +1646,10 @@ exports.deleteTask = async (req, res) => {
         }
         
         // Check permissions
+        const isAdmin = roleOf(user) === 'admin';
         const isAssigner = normalizeEmail(task.assignedBy) === normalizeEmail(user.email);
         
-        if (!isAssigner) {
+        if (!isAdmin && !isAssigner) {
             return res.status(403).json({
                 success: false,
                 message: 'You are not authorized to delete this task'
@@ -1659,6 +1660,47 @@ exports.deleteTask = async (req, res) => {
             await recordTaskDeleted({ req, task, note: '' });
         } catch (auditError) {
             console.error('Audit delete failed:', auditError);
+        }
+
+        try {
+            const googleTaskId = task?.googleSync?.taskId;
+            if (googleTaskId) {
+                const tasksScope = 'https://www.googleapis.com/auth/tasks';
+                const ownerEmail = normalizeEmail(task?.googleSync?.ownerEmail)
+                    || normalizeEmail(task?.assignedBy)
+                    || normalizeEmail(task?.assignedTo);
+
+                if (ownerEmail) {
+                    const ownerUser = await User.findOne({ email: ownerEmail })
+                        .select('email isGoogleCalendarConnected googleOAuth.refreshToken googleOAuth.scope')
+                        .lean();
+
+                    const refreshToken = ownerUser?.isGoogleCalendarConnected ? ownerUser?.googleOAuth?.refreshToken : null;
+                    const scopes = Array.isArray(ownerUser?.googleOAuth?.scope) ? ownerUser.googleOAuth.scope : [];
+
+                    if (refreshToken && scopes.includes(tasksScope)) {
+                        const tokenResponse = await refreshAccessToken(refreshToken);
+                        const accessToken = tokenResponse?.access_token;
+
+                        if (accessToken) {
+                            try {
+                                await deleteGoogleTask({
+                                    accessToken,
+                                    tasklistId: task?.googleSync?.tasklistId || '@default',
+                                    taskId: googleTaskId
+                                });
+                            } catch (googleDeleteError) {
+                                const statusCode = googleDeleteError?.statusCode;
+                                if (statusCode !== 404) {
+                                    throw googleDeleteError;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (googleError) {
+            console.error('Google task delete failed:', googleError?.message || googleError);
         }
 
         await Task.findByIdAndUpdate(id, {
