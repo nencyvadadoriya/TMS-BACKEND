@@ -428,15 +428,35 @@ const runGoogleTasksImportForUserId = async ({ userId }) => {
                 pageToken,
                 updatedMin,
                 showCompleted: false,
-                showDeleted: false,
-                showHidden: false,
+                showDeleted: true,
+                showHidden: true,
                 maxResults: 100
             });
 
             const items = Array.isArray(page?.items) ? page.items : [];
             for (const googleTask of items) {
                 const statusLower = String(googleTask?.status || '').toLowerCase();
-                if (googleTask?.deleted || googleTask?.hidden || statusLower === 'completed') {
+                if (googleTask?.deleted) {
+                    skippedDeleted += 1;
+                    const googleTaskId = googleTask?.id;
+                    if (googleTaskId) {
+                        await Task.updateMany(
+                            { 'googleSync.taskId': googleTaskId, 'googleSync.ownerEmail': ownerEmail },
+                            {
+                                $set: {
+                                    isDeleted: true,
+                                    deletedAt: new Date(),
+                                    deletedBy: ownerEmail,
+                                    'googleSync.syncedAt': new Date(),
+                                    'googleSync.lastError': null
+                                }
+                            }
+                        );
+                    }
+                    continue;
+                }
+
+                if (googleTask?.hidden || statusLower === 'completed') {
                     skippedDeleted += 1;
                     continue;
                 }
@@ -533,7 +553,19 @@ const runGoogleTasksPushForUserId = async ({ userId }) => {
     const scopes = Array.isArray(user?.googleOAuth?.scope) ? user.googleOAuth.scope : [];
 
     if (!ownerEmail || !refreshToken || !scopes.includes('https://www.googleapis.com/auth/tasks')) {
-        return { users: 1, pushed: 0, skipped: 0, failed: 0, failedUsers: 1 };
+        return {
+            users: 1,
+            candidates: 0,
+            pushed: 0,
+            skipped: 0,
+            failed: 0,
+            failedUsers: 1,
+            reason: {
+                missingOwnerEmail: !ownerEmail,
+                missingRefreshToken: !refreshToken,
+                missingTasksScope: !scopes.includes('https://www.googleapis.com/auth/tasks')
+            }
+        };
     }
 
     const accessToken = await getAccessTokenForRefreshToken(refreshToken);
@@ -547,6 +579,7 @@ const runGoogleTasksPushForUserId = async ({ userId }) => {
     let pushed = 0;
     let skipped = 0;
     let failed = 0;
+    const failedSamples = [];
 
     for (const task of candidates) {
         const alreadySynced = Boolean(task?.googleSync?.taskId);
@@ -586,10 +619,17 @@ const runGoogleTasksPushForUserId = async ({ userId }) => {
                     'googleSync.lastError': msg
                 }
             });
+
+            if (failedSamples.length < 5) {
+                failedSamples.push({
+                    taskId: task?._id?.toString?.() || String(task?._id || ''),
+                    message: msg
+                });
+            }
         }
     }
 
-    return { users: 1, pushed, skipped, failed, failedUsers: 0 };
+    return { users: 1, candidates: candidates.length, pushed, skipped, failed, failedUsers: 0, failedSamples };
 };
 
 const runGoogleTasksImportOnce = async () => {
@@ -655,15 +695,35 @@ const runGoogleTasksImportOnce = async () => {
                     pageToken,
                     updatedMin,
                     showCompleted: false,
-                    showDeleted: false,
-                    showHidden: false,
+                    showDeleted: true,
+                    showHidden: true,
                     maxResults: 100
                 });
 
                 const items = Array.isArray(page?.items) ? page.items : [];
                 for (const googleTask of items) {
                     const statusLower = String(googleTask?.status || '').toLowerCase();
-                    if (googleTask?.deleted || googleTask?.hidden || statusLower === 'completed') {
+                    if (googleTask?.deleted) {
+                        skippedDeleted += 1;
+                        const googleTaskId = googleTask?.id;
+                        if (googleTaskId) {
+                            await Task.updateMany(
+                                { 'googleSync.taskId': googleTaskId, 'googleSync.ownerEmail': ownerEmail },
+                                {
+                                    $set: {
+                                        isDeleted: true,
+                                        deletedAt: new Date(),
+                                        deletedBy: ownerEmail,
+                                        'googleSync.syncedAt': new Date(),
+                                        'googleSync.lastError': null
+                                    }
+                                }
+                            );
+                        }
+                        continue;
+                    }
+
+                    if (googleTask?.hidden || statusLower === 'completed') {
                         skippedDeleted += 1;
                         continue;
                     }
