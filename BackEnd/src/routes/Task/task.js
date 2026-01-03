@@ -15,11 +15,11 @@ const {
     approveTask,
 } =  require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
- const { requireAdminOrManager } = require("../../middleware/role.middleware");
+ const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
 
 
 const router = express.Router();
-router.post("/addTask", authMiddleware, requireAdminOrManager, addTask);
+router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'assistant'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);

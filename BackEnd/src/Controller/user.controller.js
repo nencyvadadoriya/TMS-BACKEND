@@ -483,14 +483,16 @@ exports.createUser = async (req, res) => {
 
         const { name, email, password, role, phone, department, position } = req.body;
 
-        if (!name || !email || !password) {
+        const safeEmail = (email || '').toString().trim().toLowerCase();
+
+        if (!name || !safeEmail || !password) {
             return res.status(400).json({
                 success: false,
                 message: 'Name, email and password are required'
             });
         }
 
-        const existUser = await User.findOne({ email });
+        const existUser = await User.findOne({ email: safeEmail });
         if (existUser) {
             return res.status(400).json({
                 success: false,
@@ -511,7 +513,7 @@ exports.createUser = async (req, res) => {
 
         const newUser = new User({
             name,
-            email,
+            email: safeEmail,
             password: hashedPassword,
             role: isAdmin ? (normalizedRole || 'assistant') : 'assistant',
             managerId: isManager ? requesterId : null,
@@ -526,24 +528,37 @@ exports.createUser = async (req, res) => {
 
         await newUser.save();
 
-        Promise.resolve()
-            .then(async () => {
-                await sendAccountCreatedEmail({
-                    toEmail: newUser.email,
-                    toName: newUser.name,
-                    createdByName: req.user?.name || 'User',
-                    createdByEmail: req.user?.email,
-                    role: newUser.role,
-                    password
-                });
-            })
-            .catch((err) => {
-                console.error('Account created email failed:', err?.message || err);
+        let emailSent = false;
+        try {
+            console.log('📤 Attempting to send account created email', {
+                to: newUser.email,
+                createdBy: req.user?.email,
+                role: newUser.role
             });
+
+            emailSent = await sendAccountCreatedEmail({
+                toEmail: newUser.email,
+                toName: newUser.name,
+                createdByName: req.user?.name || 'User',
+                createdByEmail: req.user?.email,
+                role: newUser.role,
+                password
+            });
+
+            if (!emailSent) {
+                console.error('❌ Account created email returned false', {
+                    to: newUser.email,
+                    createdBy: req.user?.email
+                });
+            }
+        } catch (err) {
+            console.error('❌ Account created email threw an error:', err?.message || err);
+        }
 
         res.status(201).json({
             success: true,
             message: 'User created successfully',
+            emailSent,
             data: {
                 id: newUser._id,
                 name: newUser.name,
@@ -627,6 +642,33 @@ exports.deleteUser = async (req, res) => {
                 success: false,
                 message: 'You cannot delete yourself'
             });
+        }
+
+        const userToDelete = await User.findById(id).select('email role').lean();
+
+        if (!userToDelete) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const originalEmail = (userToDelete.email || '').toString().trim().toLowerCase();
+        const tombstoneEmail = originalEmail
+            ? `${originalEmail}.deleted.${id}.${Date.now()}`
+            : '';
+
+        if (originalEmail && tombstoneEmail) {
+            await Task.updateMany(
+                { assignedTo: originalEmail },
+                { $set: { assignedTo: tombstoneEmail } }
+            );
+
+            await Brand.updateMany(
+                { 'collaborators.email': originalEmail },
+                { $set: { 'collaborators.$[c].email': tombstoneEmail, 'collaborators.$[c].status': 'removed' } },
+                { arrayFilters: [{ 'c.email': originalEmail }] }
+            );
         }
 
         const deletedUser = await User.findByIdAndDelete(id);

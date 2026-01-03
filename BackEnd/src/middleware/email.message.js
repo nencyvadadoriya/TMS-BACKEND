@@ -52,7 +52,7 @@ const createTransporter = () => {
     }
 };
 
-const transporter = createTransporter();
+let transporter = createTransporter();
 
 // Send OTP Email with comprehensive error handling
 exports.sendOtpEmail = async (email, otp, name = 'User') => {
@@ -75,6 +75,10 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
         }
 
         // Check transporter
+        if (!transporter) {
+            transporter = createTransporter();
+        }
+
         if (!transporter) {
             console.error('❌ Email transporter not initialized');
             return false;
@@ -104,10 +108,10 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
                         
                         <div style="padding: 40px 30px;">
                             <h2 style="color: #333; margin-top: 0;">Hello ${name},</h2>
- 　 　 　 　 　 　 　 　 　 <p style="color: #555; line-height: 1.6; font-size: 16px;">
- 　 　 　 　 　 　 　 　 　 　 You requested to reset your password. Please use the One-Time Password (OTP) below to verify your identity:
- 　 　 　 　 　 　 　 　 　 </p>
- 　 　 　 　 　 　 　 　 　 <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+ 　 　 　 　 　 　 　 　 <p style="color: #555; line-height: 1.6; font-size: 16px;">
+ 　 　 　 　 　 　 　 　 　 You requested to reset your password. Please use the One-Time Password (OTP) below to verify your identity:
+ 　 　 　 　 　 　 　 　 </p>
+ 　 　 　 　 　 　 　 　 <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
                                             color: white; 
                                             border-radius: 12px; 
                                             padding: 25px; 
@@ -119,19 +123,19 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
                                             box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                 ${otp}
                             </div>
- 　 　 　 　 　 　 　 　 　 <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
- 　 　 　 　 　 　 　 　 　 　 <p style="margin: 0; color: #856404;">
- 　 　 　 　 　 　 　 　 　 　 　 　 <strong>⚠️ Important:</strong> 
- 　 　 　 　 　 　 　 　 　 　 　 　 <ul style="margin: 10px 0 0 0; padding-left: 20px;">
- 　 　 　 　 　 　 　 　 　 　 　 　 　 　 <li>This OTP is valid for <strong>2 minutes</strong> only</li>
- 　 　 　 　 　 　 　 　 　 　 　 　 　 　 <li>Do not share this OTP with anyone</li>
- 　 　 　 　 　 　 　 　 　 　 　 　 　 　 <li>If you didn't request this, please ignore this email</li>
- 　 　 　 　 　 　 　 　 　 　 　 　 </ul>
- 　 　 　 　 　 　 　 　 　 　 </p>
- 　 　 　 　 　 　 　 　 　 </div>
- 　 　 　 　 　 　 　 　 　 <p style="color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
- 　 　 　 　 　 　 　 　 　 　 　 　 Need help? Contact our support team or reply to this email.
- 　 　 　 　 　 　 　 　 　 　 　 </p>
+ 　 　 　 　 　 　 　 　 <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+ 　 　 　 　 　 　 　 　 　 <p style="margin: 0; color: #856404;">
+ 　 　 　 　 　 　 　 　 　 　 <strong>⚠️ Important:</strong> 
+ 　 　 　 　 　 　 　 　 　 　 <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+ 　 　 　 　 　 　 　 　 　 　 　 <li>This OTP is valid for <strong>2 minutes</strong> only</li>
+ 　 　 　 　 　 　 　 　 　 　 　 <li>Do not share this OTP with anyone</li>
+ 　 　 　 　 　 　 　 　 　 　 　 <li>If you didn't request this, please ignore this email</li>
+ 　 　 　 　 　 　 　 　 　 　 </ul>
+ 　 　 　 　 　 　 　 　 　 </p>
+ 　 　 　 　 　 　 　 　 </div>
+ 　 　 　 　 　 　 　 　 <p style="color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
+ 　 　 　 　 　 　 　 　 　 Need help? Contact our support team or reply to this email.
+ 　 　 　 　 　 　 　 　 </p>
                         </div>
                         
                         <div style="background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px; border-top: 1px solid #dee2e6;">
@@ -236,13 +240,22 @@ exports.sendAccountCreatedEmail = async ({
         const safeRole = (role || 'assistant').toString();
         const safePassword = (password || '').toString();
 
+        const fromDisplayName = createdByName
+            ? `Task Management System (Invited by ${createdByName})`
+            : 'Task Management System';
+
+        const invitedBySubject = createdByEmail
+            ? `${createdByName} <${createdByEmail}>`
+            : createdByName;
+
         const mailOptions = {
             from: {
-                name: 'Task Management System',
+                name: fromDisplayName,
                 address: process.env.USER_EMAIL
             },
+            replyTo: createdByEmail || undefined,
             to: safeTo,
-            subject: 'Welcome to Task Management System - Your account has been created',
+            subject: `Welcome to Task Management System - Invited by ${invitedBySubject}`,
             html: `
                 <!DOCTYPE html>
                 <html>
@@ -303,16 +316,57 @@ This is an automated email. Please do not reply.
             `.trim()
         };
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log('✅ Account created email sent successfully!', {
-            to: safeTo,
-            messageId: info.messageId,
-            response: info.response
-        });
+        const maxAttempts = 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+                const info = await transporter.sendMail(mailOptions);
+                console.log('✅ Account created email sent successfully!', {
+                    to: safeTo,
+                    messageId: info.messageId,
+                    response: info.response,
+                    attempt
+                });
+                return true;
+            } catch (error) {
+                console.error('❌ Account created email sending failed with details:');
+                console.error('Error Message:', error?.message);
+                console.error('Error Code:', error?.code);
+                console.error('Error Command:', error?.command);
+                console.error('Error Response Code:', error?.responseCode);
+                console.error('Error Response:', error?.response);
 
-        return true;
+                const code = (error?.code || '').toString();
+                const shouldRetry =
+                    attempt < maxAttempts
+                    && code !== 'EAUTH'
+                    && (
+                        code === 'ETIMEDOUT'
+                        || code === 'ECONNRESET'
+                        || code === 'EAI_AGAIN'
+                        || code === 'ECONNECTION'
+                        || code === 'ESOCKET'
+                    );
+
+                if (!shouldRetry) {
+                    return false;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+                transporter = createTransporter();
+                if (!transporter) {
+                    return false;
+                }
+            }
+        }
+
+        return false;
     } catch (error) {
-        console.error('❌ Account created email sending failed:', error?.message || error);
+        console.error('❌ Account created email sending failed with details:');
+        console.error('Error Message:', error?.message);
+        console.error('Error Code:', error?.code);
+        console.error('Error Command:', error?.command);
+        console.error('Error Response Code:', error?.responseCode);
+        console.error('Error Response:', error?.response);
         return false;
     }
 };
