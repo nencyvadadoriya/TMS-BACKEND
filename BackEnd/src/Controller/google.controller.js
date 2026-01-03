@@ -25,8 +25,15 @@ const getFrontendUrl = () => {
 
 const getFrontendProfilePath = () => {
     const value = process.env.FRONTEND_PROFILE_PATH;
-    const trimmed = value ? String(value).trim() : '';
+    let trimmed = value ? String(value).trim() : '';
     if (!trimmed) return '/profile';
+
+    // Allow providing a full URL here (useful for hash routers / complex routing).
+    trimmed = trimmed.replace(/^(https?:)\/(?!\/)/i, '$1//');
+    if (/^https?:\/\//i.test(trimmed)) {
+        return trimmed.replace(/\/+$/, '');
+    }
+
     return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 };
 
@@ -34,8 +41,11 @@ const buildFrontendProfileRedirect = (queryString) => {
     const base = getFrontendUrl();
     const path = getFrontendProfilePath();
     const qs = queryString ? String(queryString).trim().replace(/^\?+/, '') : '';
-    if (!qs) return `${base}${path}`;
-    return `${base}${path}?${qs}`;
+
+    const target = /^https?:\/\//i.test(path) ? path : `${base}${path}`;
+    if (!qs) return target;
+    const separator = target.includes('?') ? '&' : '?';
+    return `${target}${separator}${qs}`;
 };
 
 exports.getAuthUrl = async (req, res) => {
