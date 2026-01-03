@@ -11,6 +11,32 @@ const readEnv = (key, fallbackKeys = []) => {
     throw new Error(`Missing environment variable: ${key}`);
 };
 
+const normalizeBaseUrl = (value) => {
+    if (!value) return '';
+    const trimmed = String(value).trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    return `https://${trimmed}`;
+};
+
+const resolveRedirectUri = () => {
+    const direct = process.env.GOOGLE_REDIRECT_URI;
+    if (direct && String(direct).trim()) {
+        return String(direct).trim();
+    }
+
+    const publicBackendUrl =
+        normalizeBaseUrl(process.env.PUBLIC_BACKEND_URL)
+        || normalizeBaseUrl(process.env.BACKEND_URL)
+        || normalizeBaseUrl(process.env.VERCEL_URL);
+
+    if (publicBackendUrl) {
+        return `${publicBackendUrl}/api/google/callback`;
+    }
+
+    return 'http://localhost:9000/api/google/callback';
+};
+
 const requestJson = ({ method, url, headers = {}, body }) => {
     return new Promise((resolve, reject) => {
         try {
@@ -67,7 +93,7 @@ const requestJson = ({ method, url, headers = {}, body }) => {
 
 const buildGoogleAuthUrl = ({ state, scopes }) => {
     const clientId = readEnv('GOOGLE_CLIENT_ID', ['VITE_GOOGLE_CLIENT_ID']);
-    const redirectUri = readEnv('GOOGLE_REDIRECT_URI');
+    const redirectUri = resolveRedirectUri();
 
     const params = new URLSearchParams({
         client_id: clientId,
@@ -85,7 +111,7 @@ const buildGoogleAuthUrl = ({ state, scopes }) => {
 const exchangeCodeForTokens = async (code) => {
     const clientId = readEnv('GOOGLE_CLIENT_ID', ['VITE_GOOGLE_CLIENT_ID']);
     const clientSecret = readEnv('GOOGLE_CLIENT_SECRET');
-    const redirectUri = readEnv('GOOGLE_REDIRECT_URI');
+    const redirectUri = resolveRedirectUri();
 
     const body = new URLSearchParams({
         code,
