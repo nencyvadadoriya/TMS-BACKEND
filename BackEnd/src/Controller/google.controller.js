@@ -5,7 +5,38 @@ const { runGoogleTasksImportForUserId } = require('../utils/googleTasksSync.job'
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'secret';
 
-const getFrontendUrl = () => process.env.FRONTEND_URL || 'http://localhost:5173';
+const normalizeBaseUrl = (value) => {
+    if (!value) return '';
+    const trimmed = String(value).trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed.replace(/\/+$/, '');
+    return `https://${trimmed}`.replace(/\/+$/, '');
+};
+
+const getFrontendUrl = () => {
+    const candidate =
+        process.env.FRONTEND_URL
+        || process.env.PUBLIC_FRONTEND_URL
+        || process.env.CLIENT_URL
+        || process.env.WEB_URL;
+
+    return normalizeBaseUrl(candidate) || 'http://localhost:5173';
+};
+
+const getFrontendProfilePath = () => {
+    const value = process.env.FRONTEND_PROFILE_PATH;
+    const trimmed = value ? String(value).trim() : '';
+    if (!trimmed) return '/profile';
+    return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
+const buildFrontendProfileRedirect = (queryString) => {
+    const base = getFrontendUrl();
+    const path = getFrontendProfilePath();
+    const qs = queryString ? String(queryString).trim().replace(/^\?+/, '') : '';
+    if (!qs) return `${base}${path}`;
+    return `${base}${path}?${qs}`;
+};
 
 exports.getAuthUrl = async (req, res) => {
     try {
@@ -87,7 +118,7 @@ exports.callback = async (req, res) => {
             : (Array.isArray(existingUser?.googleOAuth?.scope) ? existingUser.googleOAuth.scope : []);
 
         if (!refreshToken) {
-            return res.redirect(`${getFrontendUrl()}/profile?google=missing_refresh_token`);
+            return res.redirect(buildFrontendProfileRedirect('google=missing_refresh_token'));
         }
 
         await User.findByIdAndUpdate(decoded.userId, {
@@ -99,7 +130,7 @@ exports.callback = async (req, res) => {
             }
         });
 
-        return res.redirect(`${getFrontendUrl()}/profile?google=connected`);
+        return res.redirect(buildFrontendProfileRedirect('google=connected'));
     } catch (error) {
         const statusCode = error?.statusCode;
         const responseBody = error?.responseBody;
@@ -116,7 +147,7 @@ exports.callback = async (req, res) => {
             message: error?.message
         });
 
-        return res.redirect(`${getFrontendUrl()}/profile?google=error&reason=${reason}`);
+        return res.redirect(buildFrontendProfileRedirect(`google=error&reason=${reason}`));
     }
 };
 
