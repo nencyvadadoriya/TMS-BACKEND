@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../model/user.model');
 const { buildGoogleAuthUrl, exchangeCodeForTokens } = require('../utils/googleCalendar.util');
-const { runGoogleTasksImportForUserId } = require('../utils/googleTasksSync.job');
+const { runGoogleTasksImportForUserId, runGoogleTasksPushForUserId } = require('../utils/googleTasksSync.job');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'secret';
 
@@ -212,8 +212,16 @@ exports.syncTasksNow = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
 
-        const result = await runGoogleTasksImportForUserId({ userId: userId.toString() });
-        return res.status(200).json({ success: true, data: result });
+        const importResult = await runGoogleTasksImportForUserId({ userId: userId.toString() });
+        const pushResult = await runGoogleTasksPushForUserId({ userId: userId.toString() });
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                import: importResult,
+                push: pushResult
+            }
+        });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message || 'Failed to sync tasks now' });
     }
