@@ -7,6 +7,7 @@ const Task = require('../model/Task.model');
 const TaskHistory = require('../model/TaskHistory.model');
 const Brand = require('../model/Brand.model');
 const { sendOtpEmail, sendAccountCreatedEmail } = require('../middleware/email.message');
+const { _getEffectivePermissionsMap } = require('./access.controller');
 
 // Register user
 exports.registerUser = async (req, res) => {
@@ -395,6 +396,8 @@ exports.currentUser = async (req, res) => {
                 .lean()
             : [];
 
+        const effectivePermissions = await _getEffectivePermissionsMap(user._id);
+
         return res.status(200).json({
             error: false,
             msg: "Current user fetched successfully",
@@ -418,7 +421,8 @@ exports.currentUser = async (req, res) => {
                 assignedTasks: user.assignedTasks || 0,
                 completedTasks: user.completedTasks || 0,
                 pendingTasks: user.pendingTasks || 0,
-                overdueTasks: user.overdueTasks || 0
+                overdueTasks: user.overdueTasks || 0,
+                permissions: effectivePermissions
             }
         });
 

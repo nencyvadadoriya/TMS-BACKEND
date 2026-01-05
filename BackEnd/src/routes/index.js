@@ -7,5 +7,6 @@ route.use("/google", require("./google.route"))
 route.use("/brands", require("./brand.route"))
 route.use("/companies", require("./company.route"))
 route.use("/task-types", require("./taskType.route"))
+route.use("/access", require("./access.route"))
 
 module.exports = route;
