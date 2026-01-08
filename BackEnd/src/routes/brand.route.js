@@ -2,30 +2,51 @@ const express = require('express');
 const router = express.Router();
 const brandController = require('../Controller/brand.controller');
 const auth = require('../middleware/auth.middleware');
-const { requireRoles, requireAdminOrManager } = require('../middleware/role.middleware');
+const { requireModulePermission, requireAnyModulePermission } = require('../middleware/permission.middleware');
 
 // Get all brands (authenticated users)
-router.get('/', auth, brandController.getBrands);
+router.get(
+    '/',
+    auth,
+    requireAnyModulePermission(['brands_page', 'task_brand_assignment', 'create_task', 'assign_task']),
+    brandController.getBrands
+);
 
-// Get deleted brands (admin only)
-router.get('/admin/deleted', auth, requireRoles('admin'), brandController.getDeletedBrands);
+// Get brands assigned to user for task creation
+router.get(
+    '/assigned',
+    auth,
+    requireAnyModulePermission(['task_brand_assignment', 'create_task', 'assign_task', 'brands_page']),
+    brandController.getAssignedBrands
+);
+
+// Get deleted brands (permission based)
+router.get('/admin/deleted', auth, requireModulePermission('brand_delete'), brandController.getDeletedBrands);
 
 // Get single brand (authenticated users)
-router.get('/:id', auth, brandController.getBrandById);
+router.get(
+    '/:id',
+    auth,
+    requireAnyModulePermission(['brands_page', 'task_brand_assignment', 'create_task', 'assign_task']),
+    brandController.getBrandById
+);
 
-// Create brand (admin or manager only)
-router.post('/', auth, requireAdminOrManager, brandController.createBrand);
+// Create brand (permission based)
+router.post('/', auth, requireModulePermission('brand_create'), brandController.createBrand);
 
-// Update brand (admin or manager only)
-router.put('/:id', auth, requireAdminOrManager, brandController.updateBrand);
+// Bulk upsert brands (permission based)
+router.post('/bulk', auth, requireModulePermission('brand_bulk_add'), brandController.bulkUpsertBrands);
 
-// Soft delete brand (admin or manager only)
-router.delete('/:id', auth, requireAdminOrManager, brandController.softDeleteBrand);
+// Update brand (permission based)
+router.put('/:id', auth, requireModulePermission('brand_edit'), brandController.updateBrand);
 
-// Restore deleted brand (admin only)
-router.put('/:id/restore', auth, requireRoles('admin'), brandController.restoreBrand);
+// Soft delete brand (permission based)
+router.delete('/:id', auth, requireModulePermission('brand_delete'), brandController.softDeleteBrand);
 
-// Permanent delete (admin only)
-router.delete('/:id/permanent', auth, requireRoles('admin'), brandController.hardDeleteBrand);
+// Restore deleted brand (permission based)
+router.put('/:id/restore', auth, requireModulePermission('brand_delete'), brandController.restoreBrand);
+
+// Permanent delete (permission based)
+router.delete('/:id/permanent', auth, requireModulePermission('brand_delete'), brandController.hardDeleteBrand);
 
 module.exports = router;

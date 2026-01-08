@@ -44,10 +44,11 @@ const userCanAccessBrand = (brand, user) => {
 
   const isOwner = brand.owner && brand.owner.toString() === (user.id || user._id || '').toString();
   if (role === 'manager') {
-    return Boolean(isOwner || hasAssignedAccess);
+    const isAcceptedCollaborator = (brand.collaborators || []).some(c => normalizeEmail(c.email) === userEmail && (c.status === 'accepted' || c.status === 'active'));
+    return Boolean(isOwner || hasAssignedAccess || isAcceptedCollaborator);
   }
 
-  const isAcceptedCollaborator = (brand.collaborators || []).some(c => normalizeEmail(c.email) === userEmail && c.status === 'accepted');
+  const isAcceptedCollaborator = (brand.collaborators || []).some(c => normalizeEmail(c.email) === userEmail && (c.status === 'accepted' || c.status === 'active'));
   return Boolean(isOwner || isAcceptedCollaborator);
 };
 
@@ -266,7 +267,7 @@ exports.getUserBrands = async (req, res) => {
     const brands = await Brand.find({
       $or: [
         { owner: userId },
-        { 'collaborators.email': requesterEmail, 'collaborators.status': 'accepted' }
+        { 'collaborators.email': requesterEmail, 'collaborators.status': { $in: ['accepted', 'active'] } }
       ]
     })
       .populate('owner', 'name email')
@@ -491,7 +492,8 @@ exports.getBrands = async (req, res) => {
       query = {
         $or: [
           { _id: { $in: assignedBrandIds } },
-          { owner: requesterId }
+          { owner: requesterId },
+          { 'collaborators.email': requesterEmail, 'collaborators.status': { $in: ['accepted', 'active'] } }
         ]
       };
     } else if (role === 'assistant') {
@@ -503,7 +505,7 @@ exports.getBrands = async (req, res) => {
           { owner: requesterId },
           {
             'collaborators.email': requesterEmail,
-            'collaborators.status': 'accepted'
+            'collaborators.status': { $in: ['accepted', 'active'] }
           }
         ]
       };
@@ -556,6 +558,87 @@ exports.getBrands = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch brands',
+      error: error.message
+    });
+  }
+};
+
+// Get brands assigned to user for task creation (no brands_page permission required)
+exports.getAssignedBrands = async (req, res) => {
+  try {
+    const user = await withAssignedBrandIds(req.user);
+    const requesterEmail = normalizeEmail(user?.email);
+    const role = String(user?.role || '').toLowerCase();
+    const requesterId = (user?.id || user?._id || '').toString();
+
+    let query = {};
+
+    if (role === 'admin') {
+      // Admins can see all brands for task creation
+      query = {};
+    } else if (role === 'manager') {
+      // Managers can see their own brands and assigned brands
+      const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
+      query = {
+        $or: [
+          { _id: { $in: assignedBrandIds } },
+          { owner: requesterId },
+          { 'collaborators.email': requesterEmail, 'collaborators.status': { $in: ['accepted', 'active'] } }
+        ]
+      };
+    } else if (role === 'assistant') {
+      // Assistants can only see assigned brands
+      const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
+      query = { _id: { $in: assignedBrandIds } };
+    } else {
+      // Other users can see their own brands and accepted collaborator brands
+      query = {
+        $or: [
+          { owner: requesterId },
+          {
+            'collaborators.email': requesterEmail,
+            'collaborators.status': { $in: ['accepted', 'active'] }
+          }
+        ]
+      };
+    }
+
+    // Only show active brands (not deleted)
+    query.isDeleted = { $ne: true };
+
+    // Execute query
+    const brands = await Brand.find(query)
+      .select('name company status owner _id')
+      .populate('owner', 'name email')
+      .sort({ name: 1 })
+      .lean();
+
+    // Format response with assignment info
+    const formattedBrands = brands.map(brand => {
+      const isOwner = brand.owner && brand.owner._id && 
+        brand.owner._id.toString() === requesterId;
+      const isAssigned = Array.isArray(user.assignedBrandIds) && 
+        user.assignedBrandIds.some(id => id.toString() === brand._id.toString());
+      
+      return {
+        ...brand,
+        id: brand._id,
+        assignmentType: isOwner ? 'owner' : (isAssigned ? 'assigned' : 'collaborator'),
+        assignedBy: isAssigned ? 'admin' : (isOwner ? 'self' : 'manager')
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: formattedBrands,
+      total: formattedBrands.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching assigned brands:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch assigned brands',
       error: error.message
     });
   }
@@ -1029,17 +1112,9 @@ exports.restoreBrand = async (req, res) => {
   }
 };
 
-// Get deleted brands (admin only)
+// Get deleted brands 
 exports.getDeletedBrands = async (req, res) => {
   try {
-    // Only admin can see deleted brands
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only admin can view deleted brands'
-      });
-    }
-    
     const deletedBrands = await Brand.findDeleted()
       .populate('owner', 'name email role')
       .populate('deletedBy', 'name email')

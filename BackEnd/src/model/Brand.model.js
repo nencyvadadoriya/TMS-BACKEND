@@ -22,7 +22,7 @@ const collaboratorSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'invited', 'pending', 'removed'],
+    enum: ['active', 'accepted', 'invited', 'pending', 'declined', 'removed'],
     default: 'invited'
   }
 });

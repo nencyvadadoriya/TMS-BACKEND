@@ -16,14 +16,15 @@ const {
 } =  require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
  const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
+ const { requireModulePermission } = require("../../middleware/permission.middleware");
 
 
 const router = express.Router();
-router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'assistant'), addTask);
+router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'assistant'), requireModulePermission('create_task'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);
-router.delete("/deleteTask/:id", authMiddleware, deleteTask);
+router.delete("/deleteTask/:id", authMiddleware, requireModulePermission('delete_task'), deleteTask);
 router.put('/tasks/:id/approve', authMiddleware, approveTask) 
 
 // Task comments routes

@@ -29,7 +29,6 @@ const ensureDefaultModules = async () => {
     await ensureDefaultRoles();
 
     const defaults = [
-        { moduleId: 'dashboard_view', name: 'Dashboard View', defaults: { admin: 'allow', manager: 'allow', assistant: 'allow' } },
         { moduleId: 'tasks_page', name: 'All Tasks', defaults: { admin: 'allow', manager: 'allow', assistant: 'allow' } },
         { moduleId: 'calendar_page', name: 'Calendar', defaults: { admin: 'allow', manager: 'allow', assistant: 'allow' } },
         { moduleId: 'user_management', name: 'User Management', defaults: { admin: 'allow', manager: 'deny', assistant: 'deny' } },
@@ -39,10 +38,13 @@ const ensureDefaultModules = async () => {
         { moduleId: 'brand_delete', name: 'Brand Delete', defaults: { admin: 'allow', manager: 'deny', assistant: 'deny' } },
         { moduleId: 'brand_assign', name: 'Brand Assign', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
         { moduleId: 'company_bulk_add', name: 'Company Bulk Add', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
+        { moduleId: 'company_edit', name: 'Company Edit', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
+        { moduleId: 'company_delete', name: 'Company Delete', defaults: { admin: 'allow', manager: 'deny', assistant: 'deny' } },
         { moduleId: 'brand_bulk_add', name: 'Brand Bulk Add', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
         { moduleId: 'task_type_bulk_add', name: 'Task Type Bulk Add', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
         { moduleId: 'create_task', name: 'Create Task', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
         { moduleId: 'assign_task', name: 'Assign Task', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
+        { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { admin: 'allow', manager: 'allow', assistant: 'allow' } },
         { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { admin: 'allow', manager: 'own', assistant: 'deny' } },
         { moduleId: 'delete_task', name: 'Delete Task', defaults: { admin: 'allow', manager: 'deny', assistant: 'deny' } },
         { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { admin: 'allow', manager: 'allow', assistant: 'deny' } },
@@ -120,9 +122,38 @@ const requireModulePermission = (moduleId) => {
     };
 };
 
+const requireAnyModulePermission = (moduleIds) => {
+    const ids = Array.isArray(moduleIds) ? moduleIds : [moduleIds];
+
+    return async (req, res, next) => {
+        try {
+            const role = String(req.user?.role || '').toLowerCase();
+            if (role === 'admin') return next();
+
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: 'Unauthorized' });
+            }
+
+            for (const moduleId of ids) {
+                if (!moduleId) continue;
+                const effective = await getEffectivePermissionForUser(userId, moduleId);
+                if (String(effective).toLowerCase() !== 'deny') {
+                    return next();
+                }
+            }
+
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        } catch {
+            return res.status(500).json({ success: false, message: 'Failed to check permissions' });
+        }
+    };
+};
+
 module.exports = {
     ensureDefaultRoles,
     ensureDefaultModules,
     getEffectivePermissionForUser,
     requireModulePermission,
+    requireAnyModulePermission,
 };

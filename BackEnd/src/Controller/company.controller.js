@@ -10,11 +10,42 @@ const formatCompany = (c) => ({
 
 exports.getCompanies = async (req, res) => {
   try {
-    const companies = await Company.find({}).sort({ name: 1 }).lean();
+    const companies = await Company.find({ isDeleted: { $ne: true } }).sort({ name: 1 }).lean();
     res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
   } catch (error) {
     console.error('Error fetching companies:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch companies' });
+  }
+};
+
+exports.getDeletedCompanies = async (req, res) => {
+  try {
+    const companies = await Company.find({ isDeleted: true }).sort({ name: 1 }).lean();
+    res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
+  } catch (error) {
+    console.error('Error fetching deleted companies:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch deleted companies' });
+  }
+};
+
+// New method to get company history
+exports.getCompanyHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid company id' });
+    }
+
+    const company = await Company.findById(id).lean();
+    if (!company) {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+
+    const history = company.history || [];
+    res.status(200).json({ success: true, data: history });
+  } catch (error) {
+    console.error('Error fetching company history:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch company history' });
   }
 };
 
@@ -36,7 +67,17 @@ exports.createCompany = async (req, res) => {
     const created = await Company.create({
       name,
       createdBy: actorId,
-      updatedBy: actorId
+      updatedBy: actorId,
+      history: [{
+        action: 'company_created',
+        performedBy: actorId,
+        userName: actor.name || actor.email || 'Unknown',
+        userEmail: actor.email || '',
+        userRole: actor.role || '',
+        message: `Company "${name}" was created`,
+        newValue: { name, createdBy: actorId },
+        timestamp: new Date()
+      }]
     });
 
     res.status(201).json({ success: true, data: formatCompany(created.toObject()) });
@@ -85,6 +126,59 @@ exports.bulkUpsertCompanies = async (req, res) => {
   }
 };
 
+exports.updateCompany = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid company id' });
+    }
+
+    const name = normalizeName(req.body?.name);
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Company name is required' });
+    }
+
+    const actor = req.user || {};
+    const actorId = (actor.id || actor._id || '').toString();
+
+    const existingCompany = await Company.findById(id);
+    if (!existingCompany) {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+
+    const updated = await Company.findByIdAndUpdate(
+      id,
+      { 
+        $set: { name, updatedBy: actorId },
+        $push: {
+          history: {
+            action: 'company_updated',
+            performedBy: actorId,
+            userName: actor.name || actor.email || 'Unknown',
+            userEmail: actor.email || '',
+            userRole: actor.role || '',
+            message: `Company name updated from "${existingCompany.name}" to "${name}"`,
+            field: 'name',
+            oldValue: { name: existingCompany.name },
+            newValue: { name },
+            timestamp: new Date()
+          }
+        }
+      },
+      { new: true }
+    ).lean();
+
+    res.status(200).json({ success: true, data: formatCompany(updated) });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: 'Company name already exists' });
+    }
+
+    console.error('Error updating company:', error);
+    res.status(500).json({ success: false, message: 'Failed to update company' });
+  }
+};
+
 exports.deleteCompany = async (req, res) => {
   try {
     const { id } = req.params;
@@ -92,10 +186,39 @@ exports.deleteCompany = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid company id' });
     }
 
-    const deleted = await Company.findByIdAndDelete(id);
-    if (!deleted) {
+    const actor = req.user || {};
+    const actorId = (actor.id || actor._id || '').toString();
+
+    const existingCompany = await Company.findById(id);
+    if (!existingCompany) {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
+
+    const deleted = await Company.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          isActive: false,
+          isDeleted: true,
+          deletedAt: new Date(),
+          deletedBy: actorId
+        },
+        $push: {
+          history: {
+            action: 'company_deleted',
+            performedBy: actorId,
+            userName: actor.name || actor.email || 'Unknown',
+            userEmail: actor.email || '',
+            userRole: actor.role || '',
+            message: `Company "${existingCompany.name}" was deleted`,
+            oldValue: { name: existingCompany.name, isActive: existingCompany.isActive },
+            newValue: { isDeleted: true, deletedAt: new Date() },
+            timestamp: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
 
     res.status(200).json({ success: true, message: 'Company deleted successfully' });
   } catch (error) {

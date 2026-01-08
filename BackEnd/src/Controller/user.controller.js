@@ -1,4 +1,5 @@
 const User = require('../model/user.model');
+const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 
@@ -78,7 +79,15 @@ exports.registerUser = async (req, res) => {
 // Login user
 exports.loginUser = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const email = (req.body?.email || '').toString().trim().toLowerCase();
+        const password = (req.body?.password || '').toString();
+
+        if (!email || !password) {
+            return res.status(400).json({
+                error: true,
+                msg: 'Email and password are required'
+            });
+        }
         // Find user
         const user = await User.findOne({ email });
         if (!user) {
@@ -508,6 +517,16 @@ exports.createUser = async (req, res) => {
 
         const normalizedRole = String(role || 'assistant').toLowerCase();
 
+        const rawAssignedBrandIds = Array.isArray(req.body?.assignedBrandIds) ? req.body.assignedBrandIds : [];
+        const safeAssignedBrandIds = rawAssignedBrandIds
+            .map((v) => {
+                if (!v) return '';
+                if (typeof v === 'string') return v.trim();
+                if (typeof v === 'object') return String(v._id || v.id || '').trim();
+                return '';
+            })
+            .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
         if (isManager && normalizedRole !== 'assistant') {
             return res.status(403).json({
                 success: false,
@@ -522,7 +541,7 @@ exports.createUser = async (req, res) => {
             role: isAdmin ? (normalizedRole || 'assistant') : 'assistant',
             managerId: isManager ? requesterId : null,
             // If a manager creates an assistant, only assign what the manager explicitly selects
-            assignedBrandIds: (req.body?.assignedBrandIds || []),
+            assignedBrandIds: safeAssignedBrandIds,
             phone: phone || '',
             department: department || '',
             position: position || '',
@@ -593,6 +612,18 @@ exports.updateUser = async (req, res) => {
 
         const { id } = req.params;
         const updates = req.body;
+
+        if (Object.prototype.hasOwnProperty.call(updates || {}, 'assignedBrandIds')) {
+            const raw = Array.isArray(updates?.assignedBrandIds) ? updates.assignedBrandIds : [];
+            updates.assignedBrandIds = raw
+                .map((v) => {
+                    if (!v) return '';
+                    if (typeof v === 'string') return v.trim();
+                    if (typeof v === 'object') return String(v._id || v.id || '').trim();
+                    return '';
+                })
+                .filter((brandId) => mongoose.Types.ObjectId.isValid(brandId));
+        }
 
         // Prevent password update through this route for security, use change-password instead or handle carefully
         if (updates.password) {
