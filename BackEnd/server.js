@@ -6,6 +6,14 @@ const app = express();
 const PORT = process.env.PORT || 9000;
 const cors = require("cors");
 
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Promise Rejection:', reason && reason.message ? reason.message : reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err && err.message ? err.message : err);
+});
+
 const IS_VERCEL = Boolean(process.env.VERCEL);
 
 const allowedOrigins = new Set(
