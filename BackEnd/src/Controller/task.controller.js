@@ -74,6 +74,20 @@ const userCanAccessTask = async (task, user) => {
     const assignedByEmail = normalizeEmail(task.assignedBy);
     const obManagerEmail = normalizeEmail(task.obManagerEmail);
 
+    if (userRole === 'manager') {
+        if (!requesterEmail) return false;
+        if (assignedByEmail && assignedByEmail === requesterEmail) return true;
+
+        if (assignedToEmail && assignedToEmail === requesterEmail) {
+            const assignerUser = assignedByEmail
+                ? await User.findOne({ email: assignedByEmail }).select('role').lean()
+                : null;
+            return roleOf(assignerUser) === 'md_manager';
+        }
+
+        return false;
+    }
+
     if (requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) return true;
 
     // OB Manager should see only tasks routed to them (even after they reassign to assistants)
@@ -82,17 +96,6 @@ const userCanAccessTask = async (task, user) => {
         if (obManagerEmail && obManagerEmail === requesterEmail) return true;
         if (assignedToEmail && assignedToEmail === requesterEmail) return true;
         return false;
-    }
-
-    // Managers can see tasks created by MD Manager that are assigned to any Manager
-    if (userRole === 'manager') {
-        const [assignerUser, assigneeUser] = await Promise.all([
-            assignedByEmail ? User.findOne({ email: assignedByEmail }).select('role').lean() : Promise.resolve(null),
-            assignedToEmail ? User.findOne({ email: assignedToEmail }).select('role').lean() : Promise.resolve(null),
-        ]);
-        const assignerRole = roleOf(assignerUser);
-        const assigneeRole = roleOf(assigneeUser);
-        if (assignerRole === 'md_manager' && assigneeRole === 'manager') return true;
     }
 
     return false;
@@ -557,12 +560,6 @@ exports.getAllTasks = async (req, res) => {
                 ]
             }).sort({ createdAt: -1 }).lean();
         } else if (requesterRole === 'manager') {
-            // Manager sees: own tasks + tasks created by MD Manager that are assigned to any Manager
-            const managerEmails = await User.find({ role: 'manager' }).select('email').lean();
-            const emails = (managerEmails || [])
-                .map((u) => normalizeEmail(u?.email))
-                .filter(Boolean);
-
             const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
             const mdEmails = (mdManagers || [])
                 .map((u) => normalizeEmail(u?.email))
@@ -571,9 +568,8 @@ exports.getAllTasks = async (req, res) => {
             tasks = await Task.find({
                 isDeleted: { $ne: true },
                 $or: [
-                    { assignedTo: requesterEmail },
                     { assignedBy: requesterEmail },
-                    { assignedBy: { $in: mdEmails }, assignedTo: { $in: emails } }
+                    { assignedTo: requesterEmail, assignedBy: { $in: mdEmails } }
                 ]
             }).sort({ createdAt: -1 }).lean();
         } else {
@@ -1211,11 +1207,16 @@ exports.updateTask = async (req, res) => {
                 }
             }
         } else {
-            if (hasStatusKey && !(isAdmin || isAssigner || isAssignee)) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'You are not authorized to update this task'
-                });
+            if (hasStatusKey) {
+                const isObManager = requesterRole === 'ob_manager';
+                // Only the assignee can change status (admin/super_admin allowed).
+                // OB Manager is not allowed to change status even if assigned.
+                if (isObManager || !isAssignee) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not authorized to update this task'
+                    });
+                }
             }
 
             if (hasApprovalKey && !(isAdmin || isAssigner)) {

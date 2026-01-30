@@ -11,6 +11,7 @@ const {
   getAssignmentsForUser,
   getAssignmentsForCompany,
   upsertAssignment,
+  bulkUpsertAssignments,
   assignCompaniesToMdManager,
   assignCompaniesToObManager,
   assignCompaniesToSbm
@@ -22,6 +23,7 @@ router.get('/users', requireAnyModulePermission(['assign_page', 'create_task', '
 router.get('/mappings', requireAnyModulePermission(['assign_page', 'create_task', 'assign_task']), getAssignmentsForUser);
 router.get('/company-mappings', requireAnyModulePermission(['assign_page', 'create_task', 'assign_task']), getAssignmentsForCompany);
 router.post('/mappings', requireAnyModulePermission(['assign_page', 'brand_assign']), upsertAssignment);
+router.post('/mappings/bulk', requireAnyModulePermission(['assign_page', 'brand_assign']), bulkUpsertAssignments);
 
 router.post('/md-manager-companies', requireRoles('admin'), assignCompaniesToMdManager);
 router.post('/ob-manager-companies', requireRoles('admin'), assignCompaniesToObManager);

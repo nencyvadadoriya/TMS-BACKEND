@@ -488,3 +488,135 @@ exports.upsertAssignment = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to save assignment' });
   }
 };
+
+exports.bulkUpsertAssignments = async (req, res) => {
+  try {
+    const companyName = normalizeText(req.body?.companyName);
+    const userId = toObjectIdString(req.body?.userId);
+    const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
+
+    const actor = req.user || {};
+    const actorId = (actor.id || actor._id || '').toString();
+
+    if (!companyName || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ success: false, message: 'Valid companyName and userId are required' });
+    }
+
+    if (mappings.length === 0) {
+      return res.status(200).json({ success: true, data: { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 } });
+    }
+
+    const mappingDocs = await CompanyBrandTaskType.find({
+      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+    })
+      .select('taskTypeIds')
+      .lean();
+
+    const allowed = new Set(
+      (mappingDocs || [])
+        .flatMap((d) => (Array.isArray(d.taskTypeIds) ? d.taskTypeIds : []))
+        .map((id) => id.toString())
+        .filter(Boolean)
+    );
+
+    const ops = [];
+    const brandsToAdd = new Set();
+    const brandsToMaybeRemove = new Set();
+
+    for (const row of mappings) {
+      const brandId = toObjectIdString(row?.brandId);
+      const brandName = normalizeText(row?.brandName);
+      if (!brandId || !mongoose.Types.ObjectId.isValid(brandId)) continue;
+
+      const rawTaskTypeIds = Array.isArray(row?.taskTypeIds) ? row.taskTypeIds : [];
+      const taskTypeIds = rawTaskTypeIds
+        .map((v) => (v == null ? '' : String(v)).trim())
+        .filter(Boolean)
+        .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+      if (rawTaskTypeIds.length > 0 && taskTypeIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid taskTypeIds: expected Mongo ObjectIds'
+        });
+      }
+
+      if (allowed.size > 0) {
+        const invalid = taskTypeIds.filter((id) => !allowed.has(id));
+        if (invalid.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Selected task types are not allowed for this company'
+          });
+        }
+      }
+
+      if (taskTypeIds.length > 0) brandsToAdd.add(brandId);
+      else brandsToMaybeRemove.add(brandId);
+
+      const update = {
+        companyName,
+        userId,
+        brandId,
+        brandName,
+        taskTypeIds,
+        updatedBy: actorId
+      };
+
+      ops.push({
+        updateOne: {
+          filter: { companyName, userId, brandId },
+          update: { $set: update, $setOnInsert: { createdBy: actorId } },
+          upsert: true
+        }
+      });
+    }
+
+    if (ops.length === 0) {
+      return res.status(200).json({ success: true, data: { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 } });
+    }
+
+    const result = await UserBrandTaskType.bulkWrite(ops, { ordered: false });
+
+    try {
+      if (brandsToAdd.size > 0) {
+        await User.findByIdAndUpdate(userId, { $addToSet: { assignedBrandIds: { $each: Array.from(brandsToAdd) } } });
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      if (brandsToMaybeRemove.size > 0) {
+        const stillHasAny = await UserBrandTaskType.find({
+          companyName,
+          userId,
+          brandId: { $in: Array.from(brandsToMaybeRemove) },
+          taskTypeIds: { $exists: true, $ne: [] }
+        })
+          .select('brandId')
+          .lean();
+
+        const keep = new Set((stillHasAny || []).map((d) => (d?.brandId ? d.brandId.toString() : '')).filter(Boolean));
+        const toRemove = Array.from(brandsToMaybeRemove).filter((id) => !keep.has(id));
+        if (toRemove.length > 0) {
+          await User.findByIdAndUpdate(userId, { $pull: { assignedBrandIds: { $in: toRemove } } });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        matchedCount: result?.matchedCount ?? result?.nMatched,
+        modifiedCount: result?.modifiedCount ?? result?.nModified,
+        upsertedCount: result?.upsertedCount ?? (result?.upsertedIds ? Object.keys(result.upsertedIds).length : 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error bulk upserting assignments:', error);
+    return res.status(500).json({ success: false, message: 'Failed to save assignments' });
+  }
+};

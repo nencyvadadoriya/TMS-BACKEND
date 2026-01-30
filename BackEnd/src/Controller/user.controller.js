@@ -636,6 +636,7 @@ exports.createUser = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const normalizedRole = normalizeRole(role || 'assistant');
+        const roleHasParent = Array.isArray(ROLE_PARENTS[normalizedRole]) && ROLE_PARENTS[normalizedRole].length > 0;
         const requestedManagerId = String(req.body?.managerId || '').trim();
 
         const rawAssignedBrandIds = Array.isArray(req.body?.assignedBrandIds) ? req.body.assignedBrandIds : [];
@@ -683,10 +684,10 @@ exports.createUser = async (req, res) => {
             });
         }
 
-        if (isAdmin && (normalizedRole === 'admin' || normalizedRole === 'super_admin')) {
+        if (isAdmin && normalizedRole === 'super_admin') {
             return res.status(403).json({
                 success: false,
-                message: 'Admins cannot create admin or super admin users'
+                message: 'Admins cannot create super admin users'
             });
         }
 
@@ -709,35 +710,10 @@ exports.createUser = async (req, res) => {
             if (normalizedRole === 'admin') {
                 computedManagerId = requesterId;
             } else {
-                if (!mongoose.Types.ObjectId.isValid(requestedManagerId)) {
-                    return res.status(400).json({ success: false, message: 'managerId is required for this role' });
-                }
-                const managerUser = await User.findById(requestedManagerId).select('role managerId').lean();
-                if (!managerUser) {
-                    return res.status(400).json({ success: false, message: 'Invalid manager selection' });
-                }
-                if (!validateParentForRole({ childRole: normalizedRole, parentRole: managerUser.role })) {
-                    return res.status(400).json({ success: false, message: 'Invalid manager selection for role' });
-                }
-                computedManagerId = requestedManagerId;
-            }
-        }
-
-        if (isAdmin) {
-            if (normalizedRole === 'md_manager' || normalizedRole === 'sbm' || normalizedRole === 'ob_manager') {
-                computedManagerId = requesterId;
-            } else {
-                if (!mongoose.Types.ObjectId.isValid(requestedManagerId)) {
-                    if (normalizedRole === 'assistant') {
-                        computedManagerId = requesterId;
-                        // skip managerId validation for assistant when admin directly creates it
-                        // (admin can still optionally pass managerId to assign under someone)
-                        // fall through
-                    } else {
+                if (roleHasParent) {
+                    if (!mongoose.Types.ObjectId.isValid(requestedManagerId)) {
                         return res.status(400).json({ success: false, message: 'managerId is required for this role' });
                     }
-                }
-                if (mongoose.Types.ObjectId.isValid(requestedManagerId)) {
                     const managerUser = await User.findById(requestedManagerId).select('role managerId').lean();
                     if (!managerUser) {
                         return res.status(400).json({ success: false, message: 'Invalid manager selection' });
@@ -745,11 +721,51 @@ exports.createUser = async (req, res) => {
                     if (!validateParentForRole({ childRole: normalizedRole, parentRole: managerUser.role })) {
                         return res.status(400).json({ success: false, message: 'Invalid manager selection for role' });
                     }
-                    const canAssignUnderManager = await canManageUserByChain({ requesterRole, requesterId, targetUser: managerUser });
-                    if (!canAssignUnderManager) {
-                        return res.status(403).json({ success: false, message: 'Access denied.' });
-                    }
                     computedManagerId = requestedManagerId;
+                } else {
+                    computedManagerId = null;
+                }
+            }
+        }
+
+        if (isAdmin) {
+            if (normalizedRole === 'md_manager' || normalizedRole === 'sbm' || normalizedRole === 'ob_manager') {
+                computedManagerId = requesterId;
+            } else if (normalizedRole === 'admin') {
+                const requesterUser = await User.findById(requesterId).select('managerId role').lean();
+                const parentId = requesterUser?.managerId ? requesterUser.managerId.toString() : '';
+                if (!mongoose.Types.ObjectId.isValid(parentId)) {
+                    return res.status(400).json({ success: false, message: 'managerId is required for this role' });
+                }
+                computedManagerId = parentId;
+            } else {
+                if (!roleHasParent) {
+                    computedManagerId = null;
+                } else {
+                    if (!mongoose.Types.ObjectId.isValid(requestedManagerId)) {
+                        if (normalizedRole === 'assistant') {
+                            computedManagerId = requesterId;
+                            // skip managerId validation for assistant when admin directly creates it
+                            // (admin can still optionally pass managerId to assign under someone)
+                            // fall through
+                        } else {
+                            return res.status(400).json({ success: false, message: 'managerId is required for this role' });
+                        }
+                    }
+                    if (mongoose.Types.ObjectId.isValid(requestedManagerId)) {
+                        const managerUser = await User.findById(requestedManagerId).select('role managerId').lean();
+                        if (!managerUser) {
+                            return res.status(400).json({ success: false, message: 'Invalid manager selection' });
+                        }
+                        if (!validateParentForRole({ childRole: normalizedRole, parentRole: managerUser.role })) {
+                            return res.status(400).json({ success: false, message: 'Invalid manager selection for role' });
+                        }
+                        const canAssignUnderManager = await canManageUserByChain({ requesterRole, requesterId, targetUser: managerUser });
+                        if (!canAssignUnderManager) {
+                            return res.status(403).json({ success: false, message: 'Access denied.' });
+                        }
+                        computedManagerId = requestedManagerId;
+                    }
                 }
             }
         }

@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 9000;
 const IS_VERCEL = Boolean(process.env.VERCEL);
 app.use(express.urlencoded());
-app.use(express.json())
+app.use(express.json({ limit: '2mb' }))
 app.use(morgan('dev'))
 
 const allowedOrigins = new Set(
