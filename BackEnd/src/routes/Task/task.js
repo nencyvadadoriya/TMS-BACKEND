@@ -22,7 +22,7 @@ const authMiddleware = require("../../middleware/auth.middleware");
 
 
 const router = express.Router();
-router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant'), requireModulePermission('create_task'), addTask);
+router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar'), requireModulePermission('create_task'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);

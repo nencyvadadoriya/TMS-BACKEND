@@ -9,8 +9,30 @@ const Company = require('../model/Company.model');
 
 const normalizeText = (v) => (v || '').toString().trim();
 
-const escapeRegex = (value) => {
+function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const companyNameToLooseRegex = (value) => {
+  const compact = normalizeText(value).replace(/\s+/g, '');
+  if (!compact) return null;
+  const parts = compact.split('').map((ch) => escapeRegex(ch));
+  return new RegExp(`^${parts.join('\\s*')}$`, 'i');
+};
+
+const resolveCanonicalCompanyName = async (companyName) => {
+  const raw = normalizeText(companyName);
+  if (!raw) return '';
+  try {
+    const rx = companyNameToLooseRegex(raw);
+    if (!rx) return raw;
+    const company = await Company.findOne({ name: { $regex: rx }, isDeleted: { $ne: true } })
+      .select('name')
+      .lean();
+    return normalizeText(company?.name) || raw;
+  } catch {
+    return raw;
+  }
 };
 
 const toObjectIdString = (v) => {
@@ -278,8 +300,13 @@ exports.getAssignmentsForCompany = async (req, res) => {
       return res.status(200).json({ success: true, data: [] });
     }
 
+    const companyRx = companyNameToLooseRegex(companyName);
+    const companyQuery = companyRx
+      ? { $regex: companyRx }
+      : { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' };
+
     const docs = await UserBrandTaskType.find({
-      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+      companyName: companyQuery
     })
       .select('_id companyName userId brandId brandName taskTypeIds')
       .lean();
@@ -309,8 +336,13 @@ exports.getAssignmentsForUser = async (req, res) => {
       return res.status(200).json({ success: true, data: [] });
     }
 
+    const companyRx = companyNameToLooseRegex(companyName);
+    const companyQuery = companyRx
+      ? { $regex: companyRx }
+      : { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' };
+
     const docs = await UserBrandTaskType.find({
-      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' },
+      companyName: companyQuery,
       userId
     }).lean();
 
@@ -370,10 +402,12 @@ exports.upsertAssignment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Valid companyName and userId are required' });
     }
 
+    const canonicalCompanyName = await resolveCanonicalCompanyName(companyName);
+
     const brandId = await resolveBrandId({
       brandId: req.body?.brandId,
       brandName,
-      companyName
+      companyName: canonicalCompanyName
     });
 
     if (!brandId) {
@@ -412,7 +446,7 @@ exports.upsertAssignment = async (req, res) => {
 
     if (taskTypeIds.length > 0) {
       const mappingDocs = await CompanyBrandTaskType.find({
-        companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+        companyName: { $regex: `^${escapeRegex(canonicalCompanyName)}$`, $options: 'i' }
       })
         .select('taskTypeIds')
         .lean();
@@ -436,7 +470,7 @@ exports.upsertAssignment = async (req, res) => {
     }
 
     const update = {
-      companyName,
+      companyName: canonicalCompanyName,
       userId,
       brandId,
       brandName,
@@ -445,10 +479,72 @@ exports.upsertAssignment = async (req, res) => {
     };
 
     const doc = await UserBrandTaskType.findOneAndUpdate(
-      { companyName, userId, brandId },
+      { companyName: canonicalCompanyName, userId, brandId },
       { $set: update, $setOnInsert: { createdBy: actorId } },
       { new: true, upsert: true }
     ).lean();
+
+    if (taskTypeIds.length > 0) {
+      try {
+        const owner = await User.findById(userId).select('_id role managerId').lean();
+        const role = normalizeRole(owner?.role);
+        const derived = [];
+        if (role === 'rm') {
+          const ams = await User.find({ role: { $regex: /^am$/i }, managerId: owner?._id, isDeleted: { $ne: true } })
+            .select('_id')
+            .lean();
+          (ams || []).forEach((u) => derived.push(u?._id?.toString()));
+        } else if (role === 'sbm') {
+          const rms = await User.find({ role: { $regex: /^rm$/i }, managerId: owner?._id, isDeleted: { $ne: true } })
+            .select('_id')
+            .lean();
+          const rmIds = (rms || []).map((u) => u?._id).filter(Boolean);
+          (rmIds || []).forEach((id) => derived.push(id.toString()));
+          const ams = rmIds.length
+            ? await User.find({ role: { $regex: /^am$/i }, managerId: { $in: rmIds }, isDeleted: { $ne: true } })
+              .select('_id')
+              .lean()
+            : [];
+          (ams || []).forEach((u) => derived.push(u?._id?.toString()));
+        }
+
+        const derivedIds = Array.from(new Set(derived.filter((id) => mongoose.Types.ObjectId.isValid(id))));
+        if (derivedIds.length > 0) {
+          const existing = await UserBrandTaskType.find({
+            companyName: canonicalCompanyName,
+            userId: { $in: derivedIds },
+            brandId
+          })
+            .select('userId brandId taskTypeIds')
+            .lean();
+          const existsKey = new Set(
+            (existing || [])
+              .filter((d) => Array.isArray(d?.taskTypeIds) && d.taskTypeIds.length > 0)
+              .map((d) => `${d.userId?.toString()}::${d.brandId?.toString()}`)
+          );
+
+          const ops = derivedIds
+            .filter((id) => !existsKey.has(`${id}::${brandId}`))
+            .map((id) => ({
+              updateOne: {
+                filter: { companyName: canonicalCompanyName, userId: id, brandId },
+                update: { $set: { ...update, userId: id }, $setOnInsert: { createdBy: actorId } },
+                upsert: true
+              }
+            }));
+          if (ops.length > 0) {
+            await UserBrandTaskType.bulkWrite(ops, { ordered: false });
+            try {
+              await User.updateMany({ _id: { $in: derivedIds } }, { $addToSet: { assignedBrandIds: brandId } });
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     if (taskTypeIds.length > 0) {
       try {
@@ -461,7 +557,7 @@ exports.upsertAssignment = async (req, res) => {
     } else {
       try {
         const stillHasAny = await UserBrandTaskType.exists({
-          companyName,
+          companyName: canonicalCompanyName,
           userId,
           brandId,
           taskTypeIds: { $exists: true, $ne: [] }
@@ -506,8 +602,10 @@ exports.bulkUpsertAssignments = async (req, res) => {
       return res.status(200).json({ success: true, data: { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 } });
     }
 
+    const canonicalCompanyName = await resolveCanonicalCompanyName(companyName);
+
     const mappingDocs = await CompanyBrandTaskType.find({
-      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+      companyName: { $regex: `^${escapeRegex(canonicalCompanyName)}$`, $options: 'i' }
     })
       .select('taskTypeIds')
       .lean();
@@ -555,7 +653,7 @@ exports.bulkUpsertAssignments = async (req, res) => {
       else brandsToMaybeRemove.add(brandId);
 
       const update = {
-        companyName,
+        companyName: canonicalCompanyName,
         userId,
         brandId,
         brandName,
@@ -565,7 +663,7 @@ exports.bulkUpsertAssignments = async (req, res) => {
 
       ops.push({
         updateOne: {
-          filter: { companyName, userId, brandId },
+          filter: { companyName: canonicalCompanyName, userId, brandId },
           update: { $set: update, $setOnInsert: { createdBy: actorId } },
           upsert: true
         }
@@ -579,6 +677,102 @@ exports.bulkUpsertAssignments = async (req, res) => {
     const result = await UserBrandTaskType.bulkWrite(ops, { ordered: false });
 
     try {
+      const owner = await User.findById(userId).select('_id role managerId').lean();
+      const role = normalizeRole(owner?.role);
+      const derived = [];
+      if (role === 'rm') {
+        const ams = await User.find({ role: { $regex: /^am$/i }, managerId: owner?._id, isDeleted: { $ne: true } })
+          .select('_id')
+          .lean();
+        (ams || []).forEach((u) => derived.push(u?._id?.toString()));
+      } else if (role === 'sbm') {
+        const rms = await User.find({ role: { $regex: /^rm$/i }, managerId: owner?._id, isDeleted: { $ne: true } })
+          .select('_id')
+          .lean();
+        const rmIds = (rms || []).map((u) => u?._id).filter(Boolean);
+        (rmIds || []).forEach((id) => derived.push(id.toString()));
+        const ams = rmIds.length
+          ? await User.find({ role: { $regex: /^am$/i }, managerId: { $in: rmIds }, isDeleted: { $ne: true } })
+            .select('_id')
+            .lean()
+          : [];
+        (ams || []).forEach((u) => derived.push(u?._id?.toString()));
+      }
+
+      const derivedIds = Array.from(new Set(derived.filter((id) => mongoose.Types.ObjectId.isValid(id))));
+      if (derivedIds.length > 0) {
+        const positive = mappings
+          .map((row) => ({
+            brandId: toObjectIdString(row?.brandId),
+            brandName: normalizeText(row?.brandName),
+            taskTypeIds: Array.isArray(row?.taskTypeIds)
+              ? row.taskTypeIds.map((v) => (v == null ? '' : String(v)).trim()).filter((id) => mongoose.Types.ObjectId.isValid(id))
+              : []
+          }))
+          .filter((m) => m.brandId && mongoose.Types.ObjectId.isValid(m.brandId) && Array.isArray(m.taskTypeIds) && m.taskTypeIds.length > 0);
+
+        if (positive.length > 0) {
+          const brandIds = Array.from(new Set(positive.map((m) => m.brandId)));
+          const existing = await UserBrandTaskType.find({
+            companyName: canonicalCompanyName,
+            userId: { $in: derivedIds },
+            brandId: { $in: brandIds }
+          })
+            .select('userId brandId taskTypeIds')
+            .lean();
+          const existsKey = new Set(
+            (existing || [])
+              .filter((d) => Array.isArray(d?.taskTypeIds) && d.taskTypeIds.length > 0)
+              .map((d) => `${d.userId?.toString()}::${d.brandId?.toString()}`)
+          );
+
+          const derivedOps = [];
+          const derivedBrandsToAdd = new Set();
+          for (const childId of derivedIds) {
+            for (const m of positive) {
+              const key = `${childId}::${m.brandId}`;
+              if (existsKey.has(key)) continue;
+              derivedBrandsToAdd.add(m.brandId);
+              derivedOps.push({
+                updateOne: {
+                  filter: { companyName: canonicalCompanyName, userId: childId, brandId: m.brandId },
+                  update: {
+                    $set: {
+                      companyName: canonicalCompanyName,
+                      userId: childId,
+                      brandId: m.brandId,
+                      brandName: m.brandName,
+                      taskTypeIds: m.taskTypeIds,
+                      updatedBy: actorId
+                    },
+                    $setOnInsert: { createdBy: actorId }
+                  },
+                  upsert: true
+                }
+              });
+            }
+          }
+
+          if (derivedOps.length > 0) {
+            await UserBrandTaskType.bulkWrite(derivedOps, { ordered: false });
+            try {
+              if (derivedBrandsToAdd.size > 0) {
+                await User.updateMany(
+                  { _id: { $in: derivedIds } },
+                  { $addToSet: { assignedBrandIds: { $each: Array.from(derivedBrandsToAdd) } } }
+                );
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
       if (brandsToAdd.size > 0) {
         await User.findByIdAndUpdate(userId, { $addToSet: { assignedBrandIds: { $each: Array.from(brandsToAdd) } } });
       }
@@ -589,7 +783,7 @@ exports.bulkUpsertAssignments = async (req, res) => {
     try {
       if (brandsToMaybeRemove.size > 0) {
         const stillHasAny = await UserBrandTaskType.find({
-          companyName,
+          companyName: canonicalCompanyName,
           userId,
           brandId: { $in: Array.from(brandsToMaybeRemove) },
           taskTypeIds: { $exists: true, $ne: [] }

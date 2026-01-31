@@ -1,4 +1,4 @@
-// controllers/task.controller.js
+    // controllers/task.controller.js
 const mongoose = require('mongoose');
 const Task = require('../model/Task.model');
 const Brand = require('../model/Brand.model');
@@ -16,10 +16,75 @@ const {
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
+const safeObjectIdString = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'object') return String(value._id || value.id || '').trim();
+    return '';
+};
+
 const roleOf = (user) => String(user?.role || '')
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
+
+const resolveTaskScopeEmails = async (user) => {
+    const role = roleOf(user);
+    const requesterEmail = normalizeEmail(user?.email);
+    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+
+    const set = new Set();
+    if (requesterEmail) set.add(requesterEmail);
+    if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) return set;
+
+    if (role !== 'sbm' && role !== 'rm' && role !== 'am' && role !== 'ar') return set;
+
+    const dbUser = await User.findById(requesterId).select('_id email role managerId').lean();
+    if (!dbUser) return set;
+
+    const managerId = safeObjectIdString(dbUser.managerId);
+
+    if (role === 'rm') {
+        const reports = await User.find({ managerId: dbUser._id, role: { $in: ['am', 'ar'] }, isDeleted: { $ne: true } })
+            .select('email')
+            .lean();
+        (reports || []).forEach((u) => {
+            const e = normalizeEmail(u?.email);
+            if (e) set.add(e);
+        });
+    }
+
+    if (role === 'am' || role === 'ar') {
+        if (managerId && mongoose.Types.ObjectId.isValid(managerId)) {
+            const rm = await User.findById(managerId).select('_id email managerId').lean();
+            const rmEmail = normalizeEmail(rm?.email);
+            if (rmEmail) set.add(rmEmail);
+        }
+    }
+
+    if (role === 'sbm') {
+        const rms = await User.find({ managerId: dbUser._id, role: { $in: ['rm'] }, isDeleted: { $ne: true } })
+            .select('_id email')
+            .lean();
+        const rmIds = (rms || []).map((u) => u?._id).filter(Boolean);
+        (rms || []).forEach((u) => {
+            const e = normalizeEmail(u?.email);
+            if (e) set.add(e);
+        });
+
+        if (rmIds.length > 0) {
+            const reports = await User.find({ managerId: { $in: rmIds }, role: { $in: ['am', 'ar'] }, isDeleted: { $ne: true } })
+                .select('email')
+                .lean();
+            (reports || []).forEach((u) => {
+                const e = normalizeEmail(u?.email);
+                if (e) set.add(e);
+            });
+        }
+    }
+
+    return set;
+};
 
 const isAssistantRoleKey = (roleKey) => {
     const key = String(roleKey || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -73,6 +138,14 @@ const userCanAccessTask = async (task, user) => {
     const assignedToEmail = normalizeEmail(task.assignedTo);
     const assignedByEmail = normalizeEmail(task.assignedBy);
     const obManagerEmail = normalizeEmail(task.obManagerEmail);
+
+    if (userRole === 'sbm' || userRole === 'rm' || userRole === 'am' || userRole === 'ar') {
+        const scope = await resolveTaskScopeEmails(user);
+        if (scope.size === 0) return false;
+        if (assignedToEmail && scope.has(assignedToEmail)) return true;
+        if (assignedByEmail && scope.has(assignedByEmail)) return true;
+        return false;
+    }
 
     if (userRole === 'manager') {
         if (!requesterEmail) return false;
@@ -237,6 +310,87 @@ exports.addTask = async (req, res) => {
 
         const requesterRole = roleOf(req.user);
 
+        if (requesterRole === 'rm' || requesterRole === 'am') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+            }
+
+            const [requesterDb, assigneeDb] = await Promise.all([
+                User.findById(requesterId).select('_id email role managerId').lean(),
+                User.findOne({ email: normalizedAssignedTo }).select('_id email role managerId').lean()
+            ]);
+
+            if (!requesterDb) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+            }
+
+            if (!assigneeDb) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Assignee user not found'
+                });
+            }
+
+            const assigneeRole = roleOf(assigneeDb);
+            const allowedForRm = new Set(['rm', 'am', 'sbm', 'admin', 'super_admin']);
+            const allowedForAm = new Set(['am', 'rm', 'sbm', 'admin', 'super_admin']);
+            const allowed = requesterRole === 'rm' ? allowedForRm : allowedForAm;
+
+            if (!allowed.has(assigneeRole)) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+            }
+
+            if (assigneeRole === requesterRole) {
+                if (safeObjectIdString(assigneeDb._id) !== safeObjectIdString(requesterDb._id)) {
+                    return res.status(403).json({ success: false, message: 'Access denied' });
+                }
+                // Self-assignment allowed for RM/AM
+            }
+
+            if (requesterRole === 'rm' && assigneeRole === 'am') {
+                const managerIdStr = safeObjectIdString(assigneeDb.managerId);
+                if (!managerIdStr || managerIdStr !== requesterId) {
+                    return res.status(403).json({ success: false, message: 'Access denied' });
+                }
+            }
+
+            if (requesterRole === 'am' && assigneeRole === 'rm') {
+                const managerIdStr = safeObjectIdString(requesterDb.managerId);
+                if (!managerIdStr || managerIdStr !== safeObjectIdString(assigneeDb._id)) {
+                    return res.status(403).json({ success: false, message: 'Access denied' });
+                }
+            }
+
+            if (assigneeRole === 'sbm') {
+                if (requesterRole === 'rm') {
+                    const sbmId = safeObjectIdString(requesterDb.managerId);
+                    if (!sbmId || sbmId !== safeObjectIdString(assigneeDb._id)) {
+                        return res.status(403).json({ success: false, message: 'Access denied' });
+                    }
+                } else {
+                    const rmId = safeObjectIdString(requesterDb.managerId);
+                    if (!rmId || !mongoose.Types.ObjectId.isValid(rmId)) {
+                        return res.status(403).json({ success: false, message: 'Access denied' });
+                    }
+                    const rm = await User.findById(rmId).select('managerId').lean();
+                    const sbmId = safeObjectIdString(rm?.managerId);
+                    if (!sbmId || sbmId !== safeObjectIdString(assigneeDb._id)) {
+                        return res.status(403).json({ success: false, message: 'Access denied' });
+                    }
+                }
+            }
+        }
+
         let obManagerEmail = null;
 
         // Create new task object
@@ -313,7 +467,23 @@ exports.addTask = async (req, res) => {
             req.body.companyName = resolved.companyName;
         }
 
-        const finalCompanyName = (req.body.companyName || effectiveCompanyName || '').toString();
+        let finalCompanyName = (req.body.companyName || effectiveCompanyName || '').toString().trim();
+        if (!finalCompanyName) {
+            try {
+                const assigneeCompany = await User.findOne({ email: normalizedAssignedTo }).select('companyName').lean();
+                finalCompanyName = (assigneeCompany?.companyName || '').toString().trim();
+            } catch {
+                // ignore
+            }
+        }
+        if (!finalCompanyName) {
+            try {
+                const creatorCompany = await User.findOne({ email: normalizedAssignedBy }).select('companyName').lean();
+                finalCompanyName = (creatorCompany?.companyName || '').toString().trim();
+            } catch {
+                // ignore
+            }
+        }
         const finalBrand = (req.body.brand || brand || '').toString();
         const finalBrandId = req.body.brandId != null ? req.body.brandId : brandId;
 
@@ -545,6 +715,20 @@ exports.getAllTasks = async (req, res) => {
         let tasks;
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
             tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
+        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(scope);
+            if (scopeEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    isDeleted: { $ne: true },
+                    $or: [
+                        { assignedTo: { $in: scopeEmails } },
+                        { assignedBy: { $in: scopeEmails } }
+                    ]
+                }).sort({ createdAt: -1 }).lean();
+            }
         } else if (requesterRole === 'ob_manager') {
             const managerEmails = await User.find({ role: { $in: ['manager', 'md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
             const emails = (managerEmails || [])
