@@ -274,7 +274,7 @@ exports.getCompanyUsers = async (req, res) => {
     const users = await User.find({
       companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
     })
-      .select('_id name email role companyName')
+      .select('_id name email role companyName managerId')
       .sort({ name: 1 })
       .lean();
 
@@ -283,7 +283,8 @@ exports.getCompanyUsers = async (req, res) => {
       name: u.name || u.email || '',
       email: u.email || '',
       role: u.role || 'assistant',
-      companyName: u.companyName || ''
+      companyName: u.companyName || '',
+      managerId: u.managerId ? u.managerId.toString() : ''
     }));
 
     return res.status(200).json({ success: true, data: mapped });

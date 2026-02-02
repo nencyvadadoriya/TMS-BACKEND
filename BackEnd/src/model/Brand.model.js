@@ -113,6 +113,26 @@ const brandSchema = new mongoose.Schema({
     default: 'Other',
     trim: true
   },
+  groupNumber: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  groupName: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  rmName: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  amName: {
+    type: String,
+    default: '',
+    trim: true
+  },
   status: {
     type: String,
     enum: ['active', 'inactive', 'archived', 'deleted'],

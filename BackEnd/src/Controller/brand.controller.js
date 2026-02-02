@@ -6,6 +6,8 @@ const TaskHistory = require('../model/TaskHistory.model');
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const withAssignedBrandIds = async (user) => {
   try {
     const role = String(user?.role || '').toLowerCase();
@@ -77,6 +79,15 @@ const computeTaskStats = (tasks) => {
 
 const normalizeString = (v) => (v || '').toString().trim();
 
+const normalizeCompanyKey = (company) => normalizeString(company).toLowerCase().replace(/\s+/g, '');
+
+const companyNameToLooseRegex = (value) => {
+  const compact = normalizeString(value).replace(/\s+/g, '');
+  if (!compact) return null;
+  const parts = compact.split('').map((ch) => escapeRegex(ch));
+  return new RegExp(`^${parts.join('\\s*')}$`, 'i');
+};
+
 const formatTaskHistoryEntry = (entry) => ({
   ...entry,
   id: entry?._id,
@@ -123,14 +134,83 @@ const buildBrandPayload = (body) => {
   const logo = body?.logo ? body.logo.toString() : '';
   const status = normalizeString(body?.status) || 'active';
 
+  const groupNumber = normalizeString(body?.groupNumber);
+  const groupName = normalizeString(body?.groupName);
+
   return {
     name,
     company,
     category,
+    groupNumber,
+    groupName,
     website,
     logo,
     status
   };
+};
+
+const assignBrandToUsersByEmail = async ({ brandId, rmEmail, amEmail }) => {
+  try {
+    const bid = (brandId || '').toString();
+    if (!mongoose.Types.ObjectId.isValid(bid)) return;
+
+    const emails = [normalizeEmail(rmEmail), normalizeEmail(amEmail)].filter(Boolean);
+    if (!emails.length) return;
+
+    const users = await User.find({ email: { $in: emails } })
+      .select('_id email')
+      .lean();
+
+    const userIds = (users || [])
+      .map((u) => (u?._id ? u._id.toString() : ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!userIds.length) return;
+
+    await User.updateMany(
+      { _id: { $in: userIds } },
+      { $addToSet: { assignedBrandIds: bid } }
+    );
+  } catch {
+    // ignore assignment errors
+  }
+};
+
+const assignBrandToSbmForCompany = async ({ brandId, company }) => {
+  try {
+    const bid = (brandId || '').toString();
+    if (!mongoose.Types.ObjectId.isValid(bid)) return;
+
+    const rawCompany = normalizeString(company);
+    if (!rawCompany) return;
+
+    const key = normalizeCompanyKey(rawCompany);
+    if (key !== 'speedecom') return;
+
+    const companyRx = companyNameToLooseRegex(rawCompany);
+    if (!companyRx) return;
+
+    const sbms = await User.find({
+      role: { $regex: /^sbm$/i },
+      companyName: { $regex: companyRx },
+      isDeleted: { $ne: true }
+    })
+      .select('_id')
+      .lean();
+
+    const sbmIds = (sbms || [])
+      .map((u) => (u?._id ? u._id.toString() : ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!sbmIds.length) return;
+
+    await User.updateMany(
+      { _id: { $in: sbmIds } },
+      { $addToSet: { assignedBrandIds: bid } }
+    );
+  } catch {
+    // ignore assignment errors
+  }
 };
 
 const formatBrand = (b) => ({
@@ -171,6 +251,16 @@ exports.createBrand = async (req, res) => {
       });
 
       await existing.save();
+      await assignBrandToUsersByEmail({
+        brandId: existing._id,
+        rmEmail: req.body?.rmEmail,
+        amEmail: req.body?.amEmail
+      });
+      await assignBrandToSbmForCompany({
+        brandId: existing._id,
+        company: existing.company || req.body?.company
+      });
+
       return res.status(200).json({ success: true, data: formatBrand(existing.toObject()) });
     }
 
@@ -190,6 +280,15 @@ exports.createBrand = async (req, res) => {
           metadata: { name: payload.name, company: payload.company }
         }
       ]
+    });
+    await assignBrandToUsersByEmail({
+      brandId: created._id,
+      rmEmail: req.body?.rmEmail,
+      amEmail: req.body?.amEmail
+    });
+    await assignBrandToSbmForCompany({
+      brandId: created._id,
+      company: created.company || req.body?.company
     });
 
     res.status(201).json({ success: true, data: formatBrand(created.toObject()) });
@@ -243,6 +342,17 @@ exports.bulkUpsertBrands = async (req, res) => {
       results.push({
         clientId: raw?.id || raw?.clientId || '',
         ...formatBrand(doc.toObject())
+      });
+
+      await assignBrandToUsersByEmail({
+        brandId: doc?._id,
+        rmEmail: raw?.rmEmail,
+        amEmail: raw?.amEmail
+      });
+
+      await assignBrandToSbmForCompany({
+        brandId: doc?._id,
+        company: payload.company
       });
     }
 
@@ -608,7 +718,7 @@ exports.getAssignedBrands = async (req, res) => {
 
     // Execute query
     const brands = await Brand.find(query)
-      .select('name company status owner _id')
+      .select('name company status owner _id groupNumber groupName')
       .populate('owner', 'name email')
       .sort({ name: 1 })
       .lean();
