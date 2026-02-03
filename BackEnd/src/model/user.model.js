@@ -99,7 +99,27 @@ const userSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
-    
+    avatar: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    avatarPublicId: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    createdByEmail: {
+        type: String,
+        default: '',
+        trim: true,
+        lowercase: true
+    },
+    createdByName: {
+        type: String,
+        default: '',
+        trim: true
+    },
     // Timestamps
     createdAt: {
         type: Date,
@@ -109,7 +129,7 @@ const userSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-     completedApproval: {
+    completedApproval: {
         type: Boolean,
         default: false
     }

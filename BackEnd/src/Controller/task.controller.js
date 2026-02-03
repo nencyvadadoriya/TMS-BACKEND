@@ -88,12 +88,12 @@ const resolveTaskScopeEmails = async (user) => {
 
 const isAssistantRoleKey = (roleKey) => {
     const key = String(roleKey || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    return key === 'assistant' || key.includes('assistant');
+    if (key === 'assistant' || key.includes('assistant')) return true;
+    return key === 'sub_assistance' || key === 'sub_assistence' || key === 'sub_assist' || key === 'sub_assistant';
 };
 
 const canViewTaskReviews = (user) => {
-    const role = roleOf(user);
-    return role === 'ob_manager';
+    return Boolean(user);
 };
 
 const canSubmitTaskReview = (user) => {
@@ -404,13 +404,13 @@ exports.addTask = async (req, res) => {
             try {
                 const assigneeUser = await User.findOne({ email: normalizedAssignedTo }).select('role').lean();
                 const assigneeRole = roleOf(assigneeUser);
-                const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager';
+                const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
                 const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
                 const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
                 if (assigneeRole && !isAllowed) {
                     return res.status(403).json({
                         success: false,
-                        message: 'Managers can assign tasks only to Manager/OB Manager'
+                        message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
                     });
                 }
 
@@ -418,11 +418,15 @@ exports.addTask = async (req, res) => {
             } catch {
                 return res.status(403).json({
                     success: false,
-                    message: 'Managers can assign tasks only to Manager/OB Manager'
+                    message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
                 });
             }
 
             const normalizedType = effectiveTaskType.toString().trim().toLowerCase();
+            const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
+            if (normalizedType === 'other work' && keyuriEmail && normalizedAssignedTo === keyuriEmail) {
+                obManagerEmail = keyuriEmail;
+            }
             if (normalizedType === 'company') {
                 return res.status(403).json({
                     success: false,
@@ -1307,6 +1311,28 @@ exports.updateTask = async (req, res) => {
         const isAssigner = userIsTaskAssigner(previousTask, req.user);
         const isAssignee = requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail;
 
+        const KEYURI_EMAIL = normalizeEmail('keyurismartbiz@gmail.com');
+        const RUTU_EMAIL = normalizeEmail('rutusmartbiz@gmail.com');
+
+        const hasAssignedToKey = Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo');
+        const nextAssignedTo = hasAssignedToKey ? normalizeEmail(updates.assignedTo) : '';
+        const prevAssignedTo = normalizeEmail(previousTask.assignedTo);
+        const isReassignment = Boolean(hasAssignedToKey && nextAssignedTo && nextAssignedTo !== prevAssignedTo);
+
+        if (isReassignment) {
+            if (!requesterEmail || requesterEmail !== KEYURI_EMAIL) {
+                return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+            }
+
+            if (RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
+                const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
+                const assigneeRole = roleOf(assigneeUser);
+                if (assigneeRole !== 'sub_assistance') {
+                    return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+                }
+            }
+        }
+
         const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
         const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
 
@@ -1332,7 +1358,14 @@ exports.updateTask = async (req, res) => {
             const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
             const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
 
+            const allowedKeyuriUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
+            const keyuriOnlyTouchesAssignedTo = Boolean(
+                requesterEmail && requesterEmail === KEYURI_EMAIL &&
+                otherUpdateKeys.every((k) => allowedKeyuriUpdateKeys.has(k))
+            );
+
             if (obManagerOnlyTouchesAssignedTo) {
+                // Only allow reassignment under the global KEYURI->RUTU restriction above.
                 // OB Manager can reassign only tasks created by manager/md_manager to assistants
                 const assignee = updates.assignedTo ? normalizeEmail(updates.assignedTo) : '';
                 if (!assignee) {
@@ -1357,6 +1390,9 @@ exports.updateTask = async (req, res) => {
                 if (!isAssistantRoleKey(assigneeRole)) {
                     return res.status(403).json({ success: false, message: 'OB Manager can assign tasks only to Assistant' });
                 }
+            } else if (keyuriOnlyTouchesAssignedTo) {
+                // Allow Keyuri to reassign tasks even if not the original assigner.
+                // Target restrictions are enforced in the isReassignment block above.
             } else {
                 if (!isAssigner) {
                     return res.status(403).json({
@@ -1372,22 +1408,39 @@ exports.updateTask = async (req, res) => {
                         return res.status(400).json({ success: false, message: 'Assignee email is required' });
                     }
 
+                    const requesterEmail = normalizeEmail(req.user?.email);
+                    if (!requesterEmail || requesterEmail !== KEYURI_EMAIL) {
+                        return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+                    }
+
+                    if (RUTU_EMAIL && nextAssigneeEmail !== RUTU_EMAIL) {
+                        const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
+                        const assigneeRole = roleOf(assigneeUser);
+                        if (assigneeRole !== 'sub_assistance') {
+                            return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+                        }
+                    }
+
                     const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
                     const assigneeRole = roleOf(assigneeUser);
 
-                    const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager';
+                    const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
                     const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
                     const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
 
                     if (assigneeRole && !isAllowed) {
                         return res.status(403).json({
                             success: false,
-                            message: 'Managers can assign tasks only to Manager/OB Manager'
+                            message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
                         });
                     }
 
                     // Track routing via OB Manager (so OB Manager can continue to see it after forwarding)
-                    updates.obManagerEmail = assigneeRole === 'ob_manager' ? nextAssigneeEmail : null;
+                    const nextTypeKey = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
+                    const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
+                    updates.obManagerEmail = assigneeRole === 'ob_manager'
+                        ? nextAssigneeEmail
+                        : (nextTypeKey === 'other work' && keyuriEmail && nextAssigneeEmail === keyuriEmail ? nextAssigneeEmail : null);
                 }
             }
         } else {
@@ -1462,7 +1515,7 @@ exports.updateTask = async (req, res) => {
                     });
                 }
 
-                updates.brandId = resolved.brandId;
+                updates.brandId = resolvedBrandId;
                 updates.brand = resolved.brand;
                 updates.companyName = resolved.companyName;
             }
@@ -1681,17 +1734,8 @@ exports.getTaskReviews = async (req, res) => {
         if (reviewed === 'true') query.reviewStars = { $ne: null };
         if (reviewed === 'false') query.reviewStars = null;
 
-        if (requesterRole === 'ob_manager') {
-            const creatorEmails = await User.find({ role: { $in: ['manager', 'md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
-            const emails = (creatorEmails || []).map((u) => normalizeEmail(u?.email)).filter(Boolean);
-            query.assignedBy = { $in: emails };
-            query.$or = [
-                { obManagerEmail: requesterEmail },
-                { assignedTo: requesterEmail }
-            ];
-        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
-            query.assignedBy = requesterEmail;
-        }
+        void requesterRole;
+        void requesterEmail;
 
         const tasks = await Task.find(query).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
 

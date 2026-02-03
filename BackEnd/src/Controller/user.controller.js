@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 
+const cloudinary = require('cloudinary').v2;
+
 
 const Task = require('../model/Task.model');
 const TaskHistory = require('../model/TaskHistory.model');
@@ -18,9 +20,105 @@ const ROLE_PARENTS = {
     ob_manager: ['admin'],
     manager: ['md_manager'],
     assistant: ['admin', 'md_manager', 'ob_manager', 'manager'],
+    sub_assistance: ['admin', 'md_manager', 'ob_manager', 'manager'],
     sbm: ['admin'],
     rm: ['sbm'],
     am: ['rm'],
+};
+
+exports.uploadProfileAvatar = async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?._id || '').toString();
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ success: false, message: 'Avatar image is required' });
+        }
+
+        const mimetype = String(file.mimetype || '').toLowerCase();
+        if (!mimetype.startsWith('image/')) {
+            return res.status(400).json({ success: false, message: 'Only image files are allowed' });
+        }
+
+        cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET
+        });
+
+        const existingUser = await User.findById(userId).select('_id avatar avatarPublicId name email role companyName managerId assignedBrandIds assignedCompanyIds isGoogleCalendarConnected googleOAuth phone department position location createdAt updatedAt').lean();
+        if (!existingUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const uploadResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'tms/profile_avatars',
+                    resource_type: 'image',
+                    overwrite: true,
+                    transformation: [{ width: 512, height: 512, crop: 'limit' }]
+                },
+                (error, result) => {
+                    if (error) return reject(error);
+                    return resolve(result);
+                }
+            );
+            uploadStream.end(file.buffer);
+        });
+
+        const secureUrl = (uploadResult && uploadResult.secure_url) ? String(uploadResult.secure_url) : '';
+        const publicId = (uploadResult && uploadResult.public_id) ? String(uploadResult.public_id) : '';
+
+        if (!secureUrl) {
+            return res.status(500).json({ success: false, message: 'Failed to upload avatar' });
+        }
+
+        const oldPublicId = String(existingUser.avatarPublicId || '').trim();
+        if (oldPublicId) {
+            cloudinary.uploader.destroy(oldPublicId).catch(() => undefined);
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            {
+                $set: {
+                    avatar: secureUrl,
+                    avatarPublicId: publicId,
+                    updatedAt: new Date()
+                }
+            },
+            { new: true }
+        ).select('-password -resetOtp -otpExpiry -otpAttempts -otpAttemptsExpiry');
+
+        const payload = (() => {
+            try {
+                const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
+                if (!obj) return obj;
+                return {
+                    ...obj,
+                    id: (obj.id || obj._id || '').toString()
+                };
+            } catch {
+                return updatedUser;
+            }
+        })();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Avatar updated successfully',
+            user: payload
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to upload avatar',
+            error: error.message
+        });
+    }
 };
 
 const isAdminLike = (role) => {
@@ -64,7 +162,7 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
     if (reqRole === 'ob_manager') {
         if (targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'md_manager' || targetRole === 'ob_manager') return false;
-        if (targetRole !== 'assistant') return false;
+        if (targetRole !== 'assistant' && targetRole !== 'sub_assistance') return false;
     }
 
     if (reqRole === 'sbm') {
@@ -77,7 +175,21 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
     }
 
     if (reqRole === 'manager') {
-        if (targetRole !== 'assistant') return false;
+        if (targetRole !== 'assistant' && targetRole !== 'sub_assistance') return false;
+    }
+
+    // Legacy users might have no managerId. For md_manager/ob_manager we allow deleting assistant/sub_assistance
+    // in the same company to avoid being blocked by missing chain.
+    if (!targetUser.managerId && (reqRole === 'md_manager' || reqRole === 'ob_manager') && (targetRole === 'assistant' || targetRole === 'sub_assistance')) {
+        try {
+            const requester = await User.findById(reqId).select('companyName').lean();
+            const requesterCompany = (requester?.companyName || '').toString().trim().toLowerCase();
+            const targetCompany = (targetUser?.companyName || '').toString().trim().toLowerCase();
+            if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
+        } catch {
+            // ignore
+        }
+        return false;
     }
 
     let currentManagerId = targetUser.managerId;
@@ -434,7 +546,7 @@ exports.getAllUsers = async (req, res) => {
             query = {
                 $or: [
                     { _id: requesterId },
-                    { role: { $in: ['assistant', 'manager', 'md_manager', 'ob_manager'] } }
+                    { role: { $in: ['assistant', 'sub_assistance', 'manager', 'md_manager', 'ob_manager'] } }
                 ]
             };
         } else if (requesterRole === 'md_manager') {
@@ -444,7 +556,7 @@ exports.getAllUsers = async (req, res) => {
             const obManagers = await User.find({ role: 'ob_manager' }).select('_id').lean();
             const obManagerIds = (obManagers || []).map(u => String(u._id));
 
-            const assistants = await User.find({ role: 'assistant' }).select('_id').lean();
+            const assistants = await User.find({ role: { $in: ['assistant', 'sub_assistance'] } }).select('_id').lean();
             const assistantIds = (assistants || []).map(u => String(u._id));
 
             const ids = [requesterId, ...managerIds, ...obManagerIds, ...assistantIds]
@@ -457,6 +569,7 @@ exports.getAllUsers = async (req, res) => {
                 $or: [
                     { _id: requesterId },
                     { role: 'assistant' },
+                    { role: 'sub_assistance' },
                     { role: 'manager' },
                     { role: 'ob_manager' }
                 ]
@@ -649,24 +762,24 @@ exports.createUser = async (req, res) => {
             })
             .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
-        if (isManager && normalizedRole !== 'assistant') {
+        if (isManager && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'Managers can only create assistant users'
+                message: 'Managers can only create assistant or sub assistance users'
             });
         }
 
-        if (isObManager && normalizedRole !== 'assistant') {
+        if (isObManager && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'OB Managers can only create assistant users'
+                message: 'OB Managers can only create assistant or sub assistance users'
             });
         }
 
-        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant') {
+        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'MD Managers can only create manager or assistant users'
+                message: 'MD Managers can only create manager, assistant or sub assistance users'
             });
         }
 
@@ -770,7 +883,7 @@ exports.createUser = async (req, res) => {
             }
         }
 
-        if (normalizedRole === 'assistant') {
+        if ((normalizedRole === 'assistant' || normalizedRole === 'sub_assistance') && (isAdmin || isSuperAdmin) && !mongoose.Types.ObjectId.isValid(requestedManagerId)) {
             computedManagerId = null;
         }
 
@@ -786,6 +899,8 @@ exports.createUser = async (req, res) => {
             department: department || '',
             position: position || '',
             companyName: (companyName || '').toString().trim(),
+            createdByEmail: (req.user?.email || '').toString().trim().toLowerCase(),
+            createdByName: (req.user?.name || '').toString().trim(),
             createdAt: new Date(),
             updatedAt: new Date()
         });
@@ -949,10 +1064,10 @@ exports.deleteUser = async (req, res) => {
         const requesterRole = normalizeRole(req.user?.role);
         const requesterId = (req.user?.id || req.user?._id || '').toString();
 
-        if (!isAdminLike(requesterRole) && !isManagerLike(requesterRole) && requesterRole !== 'manager') {
+        if (!isAdminLike(requesterRole) && !isHierarchyManager(requesterRole)) {
             return res.status(403).json({
                 success: false,
-                message: 'Access denied. Admin only.'
+                message: 'Access denied.'
             });
         }
 
@@ -966,7 +1081,7 @@ exports.deleteUser = async (req, res) => {
             });
         }
 
-        const userToDelete = await User.findById(id).select('email role').lean();
+        const userToDelete = await User.findById(id).select('email role managerId companyName').lean();
 
         const allowed = await canManageUserByChain({ requesterRole, requesterId, targetUser: userToDelete });
         if (!allowed) {
