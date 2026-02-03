@@ -17,16 +17,39 @@ const {
     submitTaskReview,
 } =  require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
- const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
- const { requireModulePermission } = require("../../middleware/permission.middleware");
+const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
+const { requireModulePermission } = require("../../middleware/permission.middleware");
+const Task = require("../../model/Task.model");
 
+const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
+
+const allowDeleteTaskCreatorOrPermission = async (req, res, next) => {
+    try {
+        const role = String(req.user?.role || '').toLowerCase();
+        if (role === 'admin' || role === 'super_admin') return next();
+
+        const userEmail = normalizeEmail(req.user?.email);
+        const taskId = String(req.params?.id || '').trim();
+
+        if (userEmail && taskId) {
+            const task = await Task.findById(taskId).select('assignedBy').lean();
+            if (task && normalizeEmail(task.assignedBy) === userEmail) {
+                return next();
+            }
+        }
+
+        return requireModulePermission('delete_task')(req, res, next);
+    } catch {
+        return requireModulePermission('delete_task')(req, res, next);
+    }
+};
 
 const router = express.Router();
 router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar'), requireModulePermission('create_task'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);
-router.delete("/deleteTask/:id", authMiddleware, requireModulePermission('delete_task'), deleteTask);
+router.delete("/deleteTask/:id", authMiddleware, allowDeleteTaskCreatorOrPermission, deleteTask);
 router.put('/tasks/:id/approve', authMiddleware, approveTask) 
 
 // Task reviews

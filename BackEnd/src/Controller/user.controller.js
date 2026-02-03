@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 
+const cloudinary = require('cloudinary').v2;
+
 
 const Task = require('../model/Task.model');
 const TaskHistory = require('../model/TaskHistory.model');
@@ -18,9 +20,105 @@ const ROLE_PARENTS = {
     ob_manager: ['admin'],
     manager: ['md_manager'],
     assistant: ['admin', 'md_manager', 'ob_manager', 'manager'],
+    sub_assistance: ['admin', 'md_manager', 'ob_manager', 'manager'],
     sbm: ['admin'],
     rm: ['sbm'],
     am: ['rm'],
+};
+
+exports.uploadProfileAvatar = async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?._id || '').toString();
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ success: false, message: 'Avatar image is required' });
+        }
+
+        const mimetype = String(file.mimetype || '').toLowerCase();
+        if (!mimetype.startsWith('image/')) {
+            return res.status(400).json({ success: false, message: 'Only image files are allowed' });
+        }
+
+        cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET
+        });
+
+        const existingUser = await User.findById(userId).select('_id avatar avatarPublicId name email role companyName managerId assignedBrandIds assignedCompanyIds isGoogleCalendarConnected googleOAuth phone department position location createdAt updatedAt').lean();
+        if (!existingUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const uploadResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'tms/profile_avatars',
+                    resource_type: 'image',
+                    overwrite: true,
+                    transformation: [{ width: 512, height: 512, crop: 'limit' }]
+                },
+                (error, result) => {
+                    if (error) return reject(error);
+                    return resolve(result);
+                }
+            );
+            uploadStream.end(file.buffer);
+        });
+
+        const secureUrl = (uploadResult && uploadResult.secure_url) ? String(uploadResult.secure_url) : '';
+        const publicId = (uploadResult && uploadResult.public_id) ? String(uploadResult.public_id) : '';
+
+        if (!secureUrl) {
+            return res.status(500).json({ success: false, message: 'Failed to upload avatar' });
+        }
+
+        const oldPublicId = String(existingUser.avatarPublicId || '').trim();
+        if (oldPublicId) {
+            cloudinary.uploader.destroy(oldPublicId).catch(() => undefined);
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            {
+                $set: {
+                    avatar: secureUrl,
+                    avatarPublicId: publicId,
+                    updatedAt: new Date()
+                }
+            },
+            { new: true }
+        ).select('-password -resetOtp -otpExpiry -otpAttempts -otpAttemptsExpiry');
+
+        const payload = (() => {
+            try {
+                const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
+                if (!obj) return obj;
+                return {
+                    ...obj,
+                    id: (obj.id || obj._id || '').toString()
+                };
+            } catch {
+                return updatedUser;
+            }
+        })();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Avatar updated successfully',
+            user: payload
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to upload avatar',
+            error: error.message
+        });
+    }
 };
 
 const isAdminLike = (role) => {
@@ -786,6 +884,8 @@ exports.createUser = async (req, res) => {
             department: department || '',
             position: position || '',
             companyName: (companyName || '').toString().trim(),
+            createdByEmail: (req.user?.email || '').toString().trim().toLowerCase(),
+            createdByName: (req.user?.name || '').toString().trim(),
             createdAt: new Date(),
             updatedAt: new Date()
         });
