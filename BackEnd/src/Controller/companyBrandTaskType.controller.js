@@ -10,6 +10,13 @@ const escapeRegex = (value) => {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
+const companyNameToLooseRegex = (value) => {
+  const compact = normalizeText(value).replace(/\s+/g, '');
+  if (!compact) return null;
+  const parts = compact.split('').map((ch) => escapeRegex(ch));
+  return new RegExp(`^${parts.join('\\s*')}$`, 'i');
+};
+
 const resolveBrandIdFromRequest = async ({ brandId, brandName, companyName }) => {
   const rawBrandId = (brandId || '').toString().trim();
   if (rawBrandId && mongoose.Types.ObjectId.isValid(rawBrandId)) return rawBrandId;
@@ -93,8 +100,13 @@ exports.getTaskTypesForCompany = async (req, res) => {
       return res.status(200).json({ success: true, data: { companyName: '', taskTypes: [] } });
     }
 
+    const companyRx = companyNameToLooseRegex(companyName);
+    const companyQuery = companyRx
+      ? { $regex: companyRx }
+      : { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' };
+
     const docs = await CompanyBrandTaskType.find({
-      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+      companyName: companyQuery
     })
       .select('taskTypeIds')
       .lean();

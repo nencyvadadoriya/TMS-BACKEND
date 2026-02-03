@@ -271,8 +271,13 @@ exports.getCompanyUsers = async (req, res) => {
       return res.status(200).json({ success: true, data: [] });
     }
 
+    const companyRx = companyNameToLooseRegex(companyName);
+    const companyQuery = companyRx
+      ? { $regex: companyRx }
+      : { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' };
+
     const users = await User.find({
-      companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+      companyName: companyQuery
     })
       .select('_id name email role companyName managerId')
       .sort({ name: 1 })
