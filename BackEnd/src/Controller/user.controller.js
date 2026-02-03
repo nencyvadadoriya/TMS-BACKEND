@@ -162,7 +162,7 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
     if (reqRole === 'ob_manager') {
         if (targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'md_manager' || targetRole === 'ob_manager') return false;
-        if (targetRole !== 'assistant') return false;
+        if (targetRole !== 'assistant' && targetRole !== 'sub_assistance') return false;
     }
 
     if (reqRole === 'sbm') {
@@ -175,7 +175,21 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
     }
 
     if (reqRole === 'manager') {
-        if (targetRole !== 'assistant') return false;
+        if (targetRole !== 'assistant' && targetRole !== 'sub_assistance') return false;
+    }
+
+    // Legacy users might have no managerId. For md_manager/ob_manager we allow deleting assistant/sub_assistance
+    // in the same company to avoid being blocked by missing chain.
+    if (!targetUser.managerId && (reqRole === 'md_manager' || reqRole === 'ob_manager') && (targetRole === 'assistant' || targetRole === 'sub_assistance')) {
+        try {
+            const requester = await User.findById(reqId).select('companyName').lean();
+            const requesterCompany = (requester?.companyName || '').toString().trim().toLowerCase();
+            const targetCompany = (targetUser?.companyName || '').toString().trim().toLowerCase();
+            if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
+        } catch {
+            // ignore
+        }
+        return false;
     }
 
     let currentManagerId = targetUser.managerId;
@@ -532,7 +546,7 @@ exports.getAllUsers = async (req, res) => {
             query = {
                 $or: [
                     { _id: requesterId },
-                    { role: { $in: ['assistant', 'manager', 'md_manager', 'ob_manager'] } }
+                    { role: { $in: ['assistant', 'sub_assistance', 'manager', 'md_manager', 'ob_manager'] } }
                 ]
             };
         } else if (requesterRole === 'md_manager') {
@@ -542,7 +556,7 @@ exports.getAllUsers = async (req, res) => {
             const obManagers = await User.find({ role: 'ob_manager' }).select('_id').lean();
             const obManagerIds = (obManagers || []).map(u => String(u._id));
 
-            const assistants = await User.find({ role: 'assistant' }).select('_id').lean();
+            const assistants = await User.find({ role: { $in: ['assistant', 'sub_assistance'] } }).select('_id').lean();
             const assistantIds = (assistants || []).map(u => String(u._id));
 
             const ids = [requesterId, ...managerIds, ...obManagerIds, ...assistantIds]
@@ -555,6 +569,7 @@ exports.getAllUsers = async (req, res) => {
                 $or: [
                     { _id: requesterId },
                     { role: 'assistant' },
+                    { role: 'sub_assistance' },
                     { role: 'manager' },
                     { role: 'ob_manager' }
                 ]
@@ -747,24 +762,24 @@ exports.createUser = async (req, res) => {
             })
             .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
-        if (isManager && normalizedRole !== 'assistant') {
+        if (isManager && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'Managers can only create assistant users'
+                message: 'Managers can only create assistant or sub assistance users'
             });
         }
 
-        if (isObManager && normalizedRole !== 'assistant') {
+        if (isObManager && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'OB Managers can only create assistant users'
+                message: 'OB Managers can only create assistant or sub assistance users'
             });
         }
 
-        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant') {
+        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
             return res.status(403).json({
                 success: false,
-                message: 'MD Managers can only create manager or assistant users'
+                message: 'MD Managers can only create manager, assistant or sub assistance users'
             });
         }
 
@@ -868,7 +883,7 @@ exports.createUser = async (req, res) => {
             }
         }
 
-        if (normalizedRole === 'assistant') {
+        if ((normalizedRole === 'assistant' || normalizedRole === 'sub_assistance') && (isAdmin || isSuperAdmin) && !mongoose.Types.ObjectId.isValid(requestedManagerId)) {
             computedManagerId = null;
         }
 
@@ -1049,10 +1064,10 @@ exports.deleteUser = async (req, res) => {
         const requesterRole = normalizeRole(req.user?.role);
         const requesterId = (req.user?.id || req.user?._id || '').toString();
 
-        if (!isAdminLike(requesterRole) && !isManagerLike(requesterRole) && requesterRole !== 'manager') {
+        if (!isAdminLike(requesterRole) && !isHierarchyManager(requesterRole)) {
             return res.status(403).json({
                 success: false,
-                message: 'Access denied. Admin only.'
+                message: 'Access denied.'
             });
         }
 
@@ -1066,7 +1081,7 @@ exports.deleteUser = async (req, res) => {
             });
         }
 
-        const userToDelete = await User.findById(id).select('email role').lean();
+        const userToDelete = await User.findById(id).select('email role managerId companyName').lean();
 
         const allowed = await canManageUserByChain({ requesterRole, requesterId, targetUser: userToDelete });
         if (!allowed) {

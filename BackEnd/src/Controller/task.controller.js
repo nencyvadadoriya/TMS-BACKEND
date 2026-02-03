@@ -88,7 +88,8 @@ const resolveTaskScopeEmails = async (user) => {
 
 const isAssistantRoleKey = (roleKey) => {
     const key = String(roleKey || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    return key === 'assistant' || key.includes('assistant');
+    if (key === 'assistant' || key.includes('assistant')) return true;
+    return key === 'sub_assistance' || key === 'sub_assistence' || key === 'sub_assist' || key === 'sub_assistant';
 };
 
 const canViewTaskReviews = (user) => {
