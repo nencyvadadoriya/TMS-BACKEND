@@ -43,16 +43,55 @@ exports.uploadProfileAvatar = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Only image files are allowed' });
         }
 
-        cloudinary.config({
-            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-            api_key: process.env.CLOUDINARY_API_KEY,
-            api_secret: process.env.CLOUDINARY_API_SECRET
-        });
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const cloudKey = process.env.CLOUDINARY_API_KEY;
+        const cloudSecret = process.env.CLOUDINARY_API_SECRET;
 
         const existingUser = await User.findById(userId).select('_id avatar avatarPublicId name email role companyName managerId assignedBrandIds assignedCompanyIds isGoogleCalendarConnected googleOAuth phone department position location createdAt updatedAt').lean();
         if (!existingUser) {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
+
+        // Fallback when Cloudinary is not configured
+        if (!cloudName || !cloudKey || !cloudSecret) {
+            const dataUrl = `data:${mimetype};base64,${Buffer.from(file.buffer).toString('base64')}`;
+            const updatedUser = await User.findByIdAndUpdate(
+                userId,
+                {
+                    $set: {
+                        avatar: dataUrl,
+                        avatarPublicId: '',
+                        updatedAt: new Date()
+                    }
+                },
+                { new: true }
+            ).select('-password -resetOtp -otpExpiry -otpAttempts -otpAttemptsExpiry');
+
+            const payload = (() => {
+                try {
+                    const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
+                    if (!obj) return obj;
+                    return {
+                        ...obj,
+                        id: (obj.id || obj._id || '').toString()
+                    };
+                } catch {
+                    return updatedUser;
+                }
+            })();
+
+            return res.status(200).json({
+                success: true,
+                message: 'Avatar updated successfully',
+                user: payload
+            });
+        }
+
+        cloudinary.config({
+            cloud_name: cloudName,
+            api_key: cloudKey,
+            api_secret: cloudSecret
+        });
 
         const uploadResult = await new Promise((resolve, reject) => {
             const uploadStream = cloudinary.uploader.upload_stream(
@@ -116,6 +155,79 @@ exports.uploadProfileAvatar = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Failed to upload avatar',
+            error: error.message
+        });
+    }
+};
+
+exports.removeProfileAvatar = async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?._id || '').toString();
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const existingUser = await User.findById(userId)
+            .select('_id avatar avatarPublicId')
+            .lean();
+
+        if (!existingUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const oldPublicId = String(existingUser.avatarPublicId || '').trim();
+        if (oldPublicId) {
+            try {
+                const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+                const cloudKey = process.env.CLOUDINARY_API_KEY;
+                const cloudSecret = process.env.CLOUDINARY_API_SECRET;
+                if (cloudName && cloudKey && cloudSecret) {
+                    cloudinary.config({
+                        cloud_name: cloudName,
+                        api_key: cloudKey,
+                        api_secret: cloudSecret
+                    });
+                    cloudinary.uploader.destroy(oldPublicId).catch(() => undefined);
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            {
+                $set: {
+                    avatar: '',
+                    avatarPublicId: '',
+                    updatedAt: new Date()
+                }
+            },
+            { new: true }
+        ).select('-password -resetOtp -otpExpiry -otpAttempts -otpAttemptsExpiry');
+
+        const payload = (() => {
+            try {
+                const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
+                if (!obj) return obj;
+                return {
+                    ...obj,
+                    id: (obj.id || obj._id || '').toString()
+                };
+            } catch {
+                return updatedUser;
+            }
+        })();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Avatar removed successfully',
+            user: payload
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to remove avatar',
             error: error.message
         });
     }
