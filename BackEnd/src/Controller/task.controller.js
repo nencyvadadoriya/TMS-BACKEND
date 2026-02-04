@@ -1319,20 +1319,6 @@ exports.updateTask = async (req, res) => {
         const prevAssignedTo = normalizeEmail(previousTask.assignedTo);
         const isReassignment = Boolean(hasAssignedToKey && nextAssignedTo && nextAssignedTo !== prevAssignedTo);
 
-        if (isReassignment) {
-            if (!requesterEmail || requesterEmail !== KEYURI_EMAIL) {
-                return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
-            }
-
-            if (RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
-                const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
-                const assigneeRole = roleOf(assigneeUser);
-                if (assigneeRole !== 'sub_assistance') {
-                    return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
-                }
-            }
-        }
-
         const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
         const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
 
@@ -1392,7 +1378,18 @@ exports.updateTask = async (req, res) => {
                 }
             } else if (keyuriOnlyTouchesAssignedTo) {
                 // Allow Keyuri to reassign tasks even if not the original assigner.
-                // Target restrictions are enforced in the isReassignment block above.
+                // Restrict targets to Rutu or Sub Assistance.
+                if (!nextAssignedTo) {
+                    return res.status(400).json({ success: false, message: 'Assignee email is required' });
+                }
+
+                if (isReassignment && RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
+                    const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
+                    const assigneeRole = roleOf(assigneeUser);
+                    if (assigneeRole !== 'sub_assistance') {
+                        return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+                    }
+                }
             } else {
                 if (!isAssigner) {
                     return res.status(403).json({
@@ -1406,19 +1403,6 @@ exports.updateTask = async (req, res) => {
                     const nextAssigneeEmail = normalizeEmail(updates.assignedTo);
                     if (!nextAssigneeEmail) {
                         return res.status(400).json({ success: false, message: 'Assignee email is required' });
-                    }
-
-                    const requesterEmail = normalizeEmail(req.user?.email);
-                    if (!requesterEmail || requesterEmail !== KEYURI_EMAIL) {
-                        return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
-                    }
-
-                    if (RUTU_EMAIL && nextAssigneeEmail !== RUTU_EMAIL) {
-                        const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
-                        const assigneeRole = roleOf(assigneeUser);
-                        if (assigneeRole !== 'sub_assistance') {
-                            return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
-                        }
                     }
 
                     const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
