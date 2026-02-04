@@ -3,6 +3,7 @@ const route = express.Router();
 
 route.use("/auth", require("./auth/auth.route"))
 route.use("/task", require("./Task/task"))
+route.use("/push", require("./push.route"))
 route.use("/google", require("./google.route"))
 route.use("/brands", require("./brand.route"))
 route.use("/companies", require("./company.route"))

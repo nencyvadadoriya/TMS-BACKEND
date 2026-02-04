@@ -7,6 +7,7 @@ const Comment = require('../model/Comment.model');
 const TaskHistory = require('../model/TaskHistory.model');
 const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
+const { sendTaskAssignedPush } = require('../utils/pushNotifications.util');
 const {
     recordStatusChange,
     recordApprovalChange,
@@ -703,6 +704,16 @@ exports.addTask = async (req, res) => {
                         dueDate: savedTask.dueDate
                     }
                 });
+
+                try {
+                    await sendTaskAssignedPush({
+                        toEmail: savedTask.assignedTo,
+                        task: savedTask,
+                        assignedByName
+                    });
+                } catch (pushErr) {
+                    console.error('Task assignment push failed:', pushErr?.message || pushErr);
+                }
             })
             .catch((err) => {
                 console.error('Task assignment email failed:', err?.message || err);
