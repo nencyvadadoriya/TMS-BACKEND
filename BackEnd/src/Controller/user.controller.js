@@ -234,6 +234,92 @@ exports.uploadProfileAvatar = async (req, res) => {
 
 };
 
+
+
+exports.removeProfileAvatar = async (req, res) => {
+
+    try {
+
+        const userId = (req.user?.id || req.user?._id || '').toString();
+
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+        }
+
+        cloudinary.config({
+
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+
+            api_key: process.env.CLOUDINARY_API_KEY,
+
+            api_secret: process.env.CLOUDINARY_API_SECRET
+
+        });
+
+        const existingUser = await User.findById(userId).select('_id avatarPublicId').lean();
+
+        if (!existingUser) {
+
+            return res.status(404).json({ success: false, message: 'User not found' });
+
+        }
+
+        const oldPublicId = String(existingUser.avatarPublicId || '').trim();
+
+        if (oldPublicId) {
+
+            cloudinary.uploader.destroy(oldPublicId).catch(() => undefined);
+
+        }
+
+        await User.findByIdAndUpdate(
+
+            userId,
+
+            {
+
+                $set: {
+
+                    avatar: '',
+
+                    avatarPublicId: '',
+
+                    updatedAt: new Date()
+
+                }
+
+            },
+
+            { new: false }
+
+        );
+
+        return res.status(200).json({
+
+            success: true,
+
+            message: 'Avatar removed successfully'
+
+        });
+
+    } catch (error) {
+
+        return res.status(500).json({
+
+            success: false,
+
+            message: 'Failed to remove avatar',
+
+            error: error.message
+
+        });
+
+    }
+
+};
+
 const isAdminLike = (role) => {
 
     const r = normalizeRole(role);
