@@ -7,6 +7,7 @@ const Comment = require('../model/Comment.model');
 const TaskHistory = require('../model/TaskHistory.model');
 const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
+const { sendTaskAssignedPush } = require('../utils/pushNotifications.util');
 const {
     recordStatusChange,
     recordApprovalChange,
@@ -168,6 +169,18 @@ const userCanAccessTask = async (task, user) => {
         if (!requesterEmail) return false;
         if (obManagerEmail && obManagerEmail === requesterEmail) return true;
         if (assignedToEmail && assignedToEmail === requesterEmail) return true;
+        try {
+            const [reqUser, assigneeUser] = await Promise.all([
+                User.findOne({ email: requesterEmail }).select('companyName').lean(),
+                assignedToEmail ? User.findOne({ email: assignedToEmail }).select('companyName role').lean() : Promise.resolve(null)
+            ]);
+            const reqCompany = (reqUser?.companyName || '').toString().trim().toLowerCase();
+            const assCompany = (assigneeUser?.companyName || '').toString().trim().toLowerCase();
+            const assRole = roleOf(assigneeUser);
+            if (reqCompany && assCompany && reqCompany === assCompany && isAssistantRoleKey(assRole)) return true;
+        } catch {
+            // ignore
+        }
         return false;
     }
 
@@ -691,6 +704,16 @@ exports.addTask = async (req, res) => {
                         dueDate: savedTask.dueDate
                     }
                 });
+
+                try {
+                    await sendTaskAssignedPush({
+                        toEmail: savedTask.assignedTo,
+                        task: savedTask,
+                        assignedByName
+                    });
+                } catch (pushErr) {
+                    console.error('Task assignment push failed:', pushErr?.message || pushErr);
+                }
             })
             .catch((err) => {
                 console.error('Task assignment email failed:', err?.message || err);
@@ -734,19 +757,44 @@ exports.getAllTasks = async (req, res) => {
                 }).sort({ createdAt: -1 }).lean();
             }
         } else if (requesterRole === 'ob_manager') {
-            const managerEmails = await User.find({ role: { $in: ['manager', 'md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
-            const emails = (managerEmails || [])
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+
+            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $in: assistantRoles }
+                }).select('email').lean()
+                : [];
+
+            const assistantEmails = (assistantDocs || [])
                 .map((u) => normalizeEmail(u?.email))
                 .filter(Boolean);
 
-            tasks = await Task.find({
-                isDeleted: { $ne: true },
-                assignedBy: { $in: emails },
-                $or: [
-                    { obManagerEmail: requesterEmail },
-                    { assignedTo: requesterEmail }
-                ]
-            }).sort({ createdAt: -1 }).lean();
+            const or = [];
+            if (assistantEmails.length > 0) or.push({ assignedTo: { $in: assistantEmails } });
+            if (requesterEmail) {
+                or.push({ obManagerEmail: requesterEmail });
+                or.push({ assignedTo: requesterEmail });
+                or.push({ assignedBy: requesterEmail });
+            }
+
+            if (or.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    isDeleted: { $ne: true },
+                    $or: or
+                }).sort({ createdAt: -1 }).lean();
+            }
         } else if (requesterRole === 'manager') {
             const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
             const mdEmails = (mdManagers || [])
@@ -1685,7 +1733,7 @@ exports.updateTask = async (req, res) => {
             } : { email: updatedTask.assignedBy }
         };
 
-        res.json({
+        return res.json({
             success: true,
             message: 'Task updated successfully',
             data: responseData
@@ -1693,7 +1741,7 @@ exports.updateTask = async (req, res) => {
 
     } catch (error) {
         console.error('Error updating task:', error);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: 'Error updating task',
             error: error.message
@@ -1718,10 +1766,43 @@ exports.getTaskReviews = async (req, res) => {
         if (reviewed === 'true') query.reviewStars = { $ne: null };
         if (reviewed === 'false') query.reviewStars = null;
 
-        void requesterRole;
-        void requesterEmail;
+        let tasks = [];
+        if (requesterRole === 'ob_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
 
-        const tasks = await Task.find(query).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $in: assistantRoles },
+                    isDeleted: { $ne: true },
+                }).select('email').lean()
+                : [];
+
+            const assistantEmails = (assistantDocs || [])
+                .map((u) => normalizeEmail(u?.email))
+                .filter(Boolean);
+
+            if (assistantEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    ...query,
+                    assignedTo: { $in: assistantEmails }
+                }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+            }
+        } else {
+            void requesterEmail;
+            tasks = await Task.find(query).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+        }
 
         const emails = Array.from(
             new Set(

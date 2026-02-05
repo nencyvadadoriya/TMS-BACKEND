@@ -10,7 +10,8 @@ const {
     createUser,
     deleteUser,
     updateUser,
-    uploadProfileAvatar
+    uploadProfileAvatar,
+    removeProfileAvatar
 } = require('../../Controller/user.controller');
 const authMiddleware = require('../../middleware/auth.middleware');
 const multer = require('multer');
@@ -41,5 +42,6 @@ router.delete('/deleteUser/:id', authMiddleware, deleteUser);
 router.put('/updateUser/:id', authMiddleware, updateUser);
 
 router.post('/profile/avatar', authMiddleware, upload.single('avatar'), uploadProfileAvatar);
+router.delete('/profile/avatar', authMiddleware, removeProfileAvatar);
 
 module.exports = router;

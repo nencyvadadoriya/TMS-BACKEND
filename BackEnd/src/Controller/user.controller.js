@@ -89,16 +89,10 @@ exports.uploadProfileAvatar = async (req, res) => {
 
 
         cloudinary.config({
-
             cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-
             api_key: process.env.CLOUDINARY_API_KEY,
-
             api_secret: process.env.CLOUDINARY_API_SECRET
-
         });
-
-
 
         const existingUser = await User.findById(userId).select('_id avatar avatarPublicId name email role companyName managerId assignedBrandIds assignedCompanyIds isGoogleCalendarConnected googleOAuth phone department position location createdAt updatedAt').lean();
 
@@ -107,8 +101,6 @@ exports.uploadProfileAvatar = async (req, res) => {
             return res.status(404).json({ success: false, message: 'User not found' });
 
         }
-
-
 
         const uploadResult = await new Promise((resolve, reject) => {
 
@@ -241,8 +233,6 @@ exports.uploadProfileAvatar = async (req, res) => {
     }
 
 };
-
-
 
 const isAdminLike = (role) => {
 
