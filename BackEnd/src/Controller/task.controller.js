@@ -191,9 +191,22 @@ const managerAllowedBrandIdSet = async (user) => {
     const actorId = (user?.id || user?._id || user?.userId || '').toString();
     if (!actorId || !mongoose.Types.ObjectId.isValid(actorId)) return new Set();
 
-    const dbUser = await User.findById(actorId).select('assignedBrandIds').lean();
-    const ids = Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds.map(String) : [];
-    return new Set(ids);
+    const ids = new Set();
+    let currentId = actorId;
+    for (let depth = 0; depth < 8; depth++) {
+        const dbUser = await User.findById(currentId).select('assignedBrandIds managerId').lean();
+        if (!dbUser) break;
+        const brandIds = Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds.map(String) : [];
+        brandIds.forEach((id) => {
+            if (id) ids.add(id);
+        });
+
+        const nextManagerId = (dbUser?.managerId || '').toString();
+        if (!nextManagerId || !mongoose.Types.ObjectId.isValid(nextManagerId)) break;
+        currentId = nextManagerId;
+    }
+
+    return ids;
 };
 
 const resolveBrandFromRequest = async ({ brandId, brandName, companyName }) => {
@@ -440,7 +453,7 @@ exports.addTask = async (req, res) => {
             if (normalizedType === 'other work' && keyuriEmail && normalizedAssignedTo === keyuriEmail) {
                 obManagerEmail = keyuriEmail;
             }
-            if (normalizedType === 'company') {
+            if (normalizedType === 'company' && requesterRole !== 'md_manager') {
                 return res.status(403).json({
                     success: false,
                     message: 'Managers cannot assign company-level tasks'
@@ -453,35 +466,49 @@ exports.addTask = async (req, res) => {
                 companyName: effectiveCompanyName
             });
 
-            const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
             const resolvedBrandId = resolved.brandId ? resolved.brandId.toString() : '';
-            const requesterId = (req.user?.id || req.user?._id || req.user?.userId || '').toString();
-            const isOwner = requesterId && resolved?.owner && resolved.owner.toString() === requesterId;
 
-            if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Managers must assign tasks to an allowed brand'
-                });
+            if (requesterRole === 'manager') {
+                const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
+                const requesterId = (req.user?.id || req.user?._id || req.user?.userId || '').toString();
+                const isOwner = requesterId && resolved?.owner && resolved.owner.toString() === requesterId;
+
+                if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Managers must assign tasks to an allowed brand'
+                    });
+                }
+
+                if (!allowedBrandIds.has(resolvedBrandId) && !isOwner) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not allowed to assign tasks for this brand'
+                    });
+                }
+
+                if (isOwner && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                    await User.findByIdAndUpdate(requesterId, {
+                        $addToSet: { assignedBrandIds: resolvedBrandId }
+                    });
+                }
+
+                // Force canonical brand/company fields from Brand document
+                req.body.brandId = resolved.brandId;
+                req.body.brand = resolved.brand;
+                req.body.companyName = resolved.companyName;
+            } else {
+                // md_manager: allow any brand. If it exists, normalize it; if not, keep provided values.
+                if (resolvedBrandId && mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
+                    req.body.brandId = new mongoose.Types.ObjectId(resolvedBrandId);
+                    req.body.brand = resolved.brand;
+                    req.body.companyName = resolved.companyName;
+                } else {
+                    req.body.brandId = null;
+                    req.body.brand = (brand || '').toString();
+                    req.body.companyName = (effectiveCompanyName || '').toString();
+                }
             }
-
-            if (!allowedBrandIds.has(resolvedBrandId) && !isOwner) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'You are not allowed to assign tasks for this brand'
-                });
-            }
-
-            if (isOwner && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
-                await User.findByIdAndUpdate(requesterId, {
-                    $addToSet: { assignedBrandIds: resolvedBrandId }
-                });
-            }
-
-            // Force canonical brand/company fields from Brand document
-            req.body.brandId = resolved.brandId;
-            req.body.brand = resolved.brand;
-            req.body.companyName = resolved.companyName;
         }
 
         let finalCompanyName = (req.body.companyName || effectiveCompanyName || '').toString().trim();
@@ -502,7 +529,11 @@ exports.addTask = async (req, res) => {
             }
         }
         const finalBrand = (req.body.brand || brand || '').toString();
-        const finalBrandId = req.body.brandId != null ? req.body.brandId : brandId;
+        const rawFallbackBrandId = brandId != null ? String(brandId) : '';
+        const safeFallbackBrandId = rawFallbackBrandId && mongoose.Types.ObjectId.isValid(rawFallbackBrandId)
+            ? rawFallbackBrandId
+            : null;
+        const finalBrandId = req.body.brandId != null ? req.body.brandId : safeFallbackBrandId;
 
         const newTask = new Task({
             title,
@@ -892,11 +923,7 @@ exports.getAllTasks = async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching tasks:', error);
-        return res.status(500).json({
-            success: false,
-            message: 'Error fetching tasks',
-            error: error.message
-        });
+        return res.status(500).json({ success: false, message: 'Error fetching tasks', error: error.message });
     }
 };
 
@@ -1515,7 +1542,7 @@ exports.updateTask = async (req, res) => {
         if ((requesterRole === 'manager' || requesterRole === 'md_manager') && otherUpdateKeys.length > 0) {
 
             const nextTaskType = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
-            if (nextTaskType === 'company') {
+            if (nextTaskType === 'company' && requesterRole !== 'md_manager') {
                 return res.status(403).json({
                     success: false,
                     message: 'Managers cannot assign company-level tasks'
@@ -1530,26 +1557,33 @@ exports.updateTask = async (req, res) => {
                     companyName: updates.companyName || updates.company || previousTask.companyName
                 });
 
-                const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
                 const resolvedBrandId = resolved.brandId ? resolved.brandId.toString() : '';
 
-                if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
-                    return res.status(400).json({
-                        success: false,
-                        message: 'Managers must assign tasks to an allowed brand'
-                    });
-                }
+                if (requesterRole === 'manager') {
+                    if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Managers must assign tasks to an allowed brand'
+                        });
+                    }
 
-                if (!allowedBrandIds.has(resolvedBrandId)) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'You are not allowed to assign tasks for this brand'
-                    });
-                }
+                    const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
+                    if (!allowedBrandIds.has(resolvedBrandId)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: 'You are not allowed to assign tasks for this brand'
+                        });
+                    }
 
-                updates.brandId = resolvedBrandId;
-                updates.brand = resolved.brand;
-                updates.companyName = resolved.companyName;
+                    updates.brandId = resolvedBrandId;
+                    updates.brand = resolved.brand;
+                    updates.companyName = resolved.companyName;
+                } else {
+                    // md_manager: allow any brand (even if not found). Store brandId only when resolvable.
+                    updates.brandId = (resolvedBrandId && mongoose.Types.ObjectId.isValid(resolvedBrandId)) ? resolvedBrandId : null;
+                    updates.brand = (resolved.brand || '').toString();
+                    updates.companyName = (resolved.companyName || '').toString();
+                }
             }
         }
 
@@ -1592,7 +1626,7 @@ exports.updateTask = async (req, res) => {
                 if (prevDue !== nextDue) changes.dueDate = { from: prevDue, to: nextDue };
 
                 const approvalChanged = Boolean(previousTask.completedApproval) !== Boolean(updatedTask.completedApproval);
-                const statusChanged = String(previousTask.status) !== String(updatedTask.status);
+                const statusChangedForAudit = String(previousTask.status) !== String(updatedTask.status);
 
                 const nonStatusApprovalFields = Object.keys(changes).filter((k) => !['status', 'completedApproval'].includes(k));
 
@@ -1600,7 +1634,7 @@ exports.updateTask = async (req, res) => {
                 // - If status changed (even if approval got cleared as part of pending transition), record only status.
                 // - Else record approval changes.
                 // - Else record field updates.
-                if (statusChanged) {
+                if (statusChangedForAudit) {
                     await recordStatusChange({ req, previousTask, updatedTask, note, requestRecheck });
                 } else if (approvalChanged) {
                     await recordApprovalChange({ req, previousTask, updatedTask, note });

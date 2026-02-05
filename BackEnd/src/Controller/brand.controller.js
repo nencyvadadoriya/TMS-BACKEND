@@ -2,27 +2,88 @@ const mongoose = require('mongoose');
 const Brand = require('../model/Brand.model');
 const Task = require('../model/Task.model');
 const User = require('../model/user.model');
+const Company = require('../model/Company.model');
 const TaskHistory = require('../model/TaskHistory.model');
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const resolveAllowedCompanyNamesForUser = async (user) => {
+  try {
+    const startId = (user?.id || user?._id || '').toString();
+    if (!mongoose.Types.ObjectId.isValid(startId)) return [];
+
+    let currentId = startId;
+    let fallbackCompany = '';
+    for (let depth = 0; depth < 8; depth++) {
+      const dbUser = await User.findById(currentId).select('assignedCompanyIds managerId companyName').lean();
+      if (!dbUser) return [];
+
+      if (!fallbackCompany) {
+        fallbackCompany = (dbUser?.companyName || '').toString().trim();
+      }
+
+      const companyIds = Array.isArray(dbUser?.assignedCompanyIds) ? dbUser.assignedCompanyIds : [];
+      if (companyIds.length > 0) {
+        const companies = await Company.find({
+          _id: { $in: companyIds },
+          isDeleted: { $ne: true }
+        }).select('name').lean();
+
+        return (companies || []).map((c) => (c?.name || '').toString().trim()).filter(Boolean);
+      }
+
+      const nextManagerId = (dbUser?.managerId || '').toString();
+      if (!mongoose.Types.ObjectId.isValid(nextManagerId)) return [];
+      currentId = nextManagerId;
+    }
+
+    return fallbackCompany ? [fallbackCompany] : [];
+  } catch {
+    return [];
+  }
+};
+
 const withAssignedBrandIds = async (user) => {
   try {
     const role = String(user?.role || '').toLowerCase();
     if (role !== 'manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am') return user;
 
-    if (Array.isArray(user?.assignedBrandIds) && user?.managerId) return user;
+    if (Array.isArray(user?.assignedBrandIds) && user?.managerId && role !== 'md_manager') return user;
 
     const id = (user?.id || user?._id || '').toString();
     if (!mongoose.Types.ObjectId.isValid(id)) return user;
 
-    const dbUser = await User.findById(id).select('assignedBrandIds managerId').lean();
+    const assignedBrandIds = new Set();
+    let managerId = null;
+    let currentId = id;
+    for (let depth = 0; depth < 8; depth++) {
+      const dbUser = await User.findById(currentId).select('assignedBrandIds managerId').lean();
+      if (!dbUser) break;
+
+      (Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds : [])
+        .map(String)
+        .filter(Boolean)
+        .forEach((bid) => assignedBrandIds.add(bid));
+
+      managerId = managerId || dbUser?.managerId || null;
+
+      const nextManagerId = (dbUser?.managerId || '').toString();
+      if (!mongoose.Types.ObjectId.isValid(nextManagerId)) break;
+      currentId = nextManagerId;
+    }
+
+    let allowedCompanyNames = undefined;
+    if (role === 'md_manager') {
+      allowedCompanyNames = await resolveAllowedCompanyNamesForUser({ id });
+    }
+
     return {
       ...user,
-      assignedBrandIds: Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds : [],
-      managerId: user?.managerId || dbUser?.managerId || null
+      assignedBrandIds: Array.from(assignedBrandIds),
+      managerId: user?.managerId || managerId || null,
+      allowedCompanyNames
     };
   } catch {
     return user;
@@ -45,6 +106,13 @@ const userCanAccessBrand = (brand, user) => {
   }
 
   const isOwner = brand.owner && brand.owner.toString() === (user.id || user._id || '').toString();
+  if (role === 'md_manager') {
+    const allowedCompanies = Array.isArray(user.allowedCompanyNames) ? user.allowedCompanyNames : [];
+    const brandCompany = (brand.company || '').toString().trim().toLowerCase();
+    const companyAllowed = allowedCompanies.some((c) => (c || '').toString().trim().toLowerCase() === brandCompany);
+    if (companyAllowed) return true;
+  }
+
   if (role === 'manager' || role === 'md_manager') {
     const isAcceptedCollaborator = (brand.collaborators || []).some(c => normalizeEmail(c.email) === userEmail && (c.status === 'accepted' || c.status === 'active'));
     return Boolean(isOwner || hasAssignedAccess || isAcceptedCollaborator);
@@ -597,7 +665,17 @@ exports.getBrands = async (req, res) => {
 
     if (role === 'admin' || role === 'super_admin') {
       query = {};
-    } else if (role === 'manager' || role === 'md_manager') {
+    } else if (role === 'md_manager') {
+      const allowedCompanies = Array.isArray(user?.allowedCompanyNames) ? user.allowedCompanyNames : await resolveAllowedCompanyNamesForUser(user);
+      if (allowedCompanies.length === 0) {
+        return res.status(200).json({ success: true, data: [], total: 0 });
+      }
+      query = {
+        $or: allowedCompanies.map((name) => ({
+          company: { $regex: `^${escapeRegex(name)}$`, $options: 'i' }
+        }))
+      };
+    } else if (role === 'manager') {
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {
         $or: [
@@ -645,8 +723,11 @@ exports.getBrands = async (req, res) => {
       query.company = req.query.company;
     }
 
+    const includeDeleted = String(req.query?.includeDeleted || '').toLowerCase() === 'true';
+
     // Execute query
     const brands = await Brand.find(query)
+      .setOptions(includeDeleted ? { includeDeleted: true } : {})
       .populate('owner', 'name email')
       .sort({ createdAt: -1 })
       .lean();
@@ -686,7 +767,17 @@ exports.getAssignedBrands = async (req, res) => {
     if (role === 'admin' || role === 'super_admin') {
       // Admins can see all brands for task creation
       query = {};
-    } else if (role === 'manager' || role === 'md_manager') {
+    } else if (role === 'md_manager') {
+      const allowedCompanies = Array.isArray(user?.allowedCompanyNames) ? user.allowedCompanyNames : await resolveAllowedCompanyNamesForUser(user);
+      if (allowedCompanies.length === 0) {
+        return res.status(200).json({ success: true, data: [], total: 0 });
+      }
+      query = {
+        $or: allowedCompanies.map((name) => ({
+          company: { $regex: `^${escapeRegex(name)}$`, $options: 'i' }
+        }))
+      };
+    } else if (role === 'manager') {
       // Managers can see their own brands and assigned brands
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {
