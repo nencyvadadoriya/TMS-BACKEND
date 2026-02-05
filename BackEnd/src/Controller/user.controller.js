@@ -88,10 +88,28 @@ exports.uploadProfileAvatar = async (req, res) => {
 
 
 
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.CLOUD_NAME;
+        const apiKey = process.env.CLOUDINARY_API_KEY || process.env.API_KEY;
+        const apiSecret = process.env.CLOUDINARY_API_SECRET || process.env.API_SECRET;
+
+        if (!cloudName || !apiKey || !apiSecret) {
+
+            return res.status(500).json({
+
+                success: false,
+
+                message: 'Failed to upload avatar',
+
+                error: 'Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET (or CLOUD_NAME/API_KEY/API_SECRET) in .env'
+
+            });
+
+        }
+
         cloudinary.config({
-            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-            api_key: process.env.CLOUDINARY_API_KEY,
-            api_secret: process.env.CLOUDINARY_API_SECRET
+            cloud_name: cloudName,
+            api_key: apiKey,
+            api_secret: apiSecret
         });
 
         const existingUser = await User.findById(userId).select('_id avatar avatarPublicId name email role companyName managerId assignedBrandIds assignedCompanyIds isGoogleCalendarConnected googleOAuth phone department position location createdAt updatedAt').lean();
@@ -248,13 +266,31 @@ exports.removeProfileAvatar = async (req, res) => {
 
         }
 
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.CLOUD_NAME;
+        const apiKey = process.env.CLOUDINARY_API_KEY || process.env.API_KEY;
+        const apiSecret = process.env.CLOUDINARY_API_SECRET || process.env.API_SECRET;
+
+        if (!cloudName || !apiKey || !apiSecret) {
+
+            return res.status(500).json({
+
+                success: false,
+
+                message: 'Failed to remove avatar',
+
+                error: 'Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET (or CLOUD_NAME/API_KEY/API_SECRET) in .env'
+
+            });
+
+        }
+
         cloudinary.config({
 
-            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            cloud_name: cloudName,
 
-            api_key: process.env.CLOUDINARY_API_KEY,
+            api_key: apiKey,
 
-            api_secret: process.env.CLOUDINARY_API_SECRET
+            api_secret: apiSecret
 
         });
 
