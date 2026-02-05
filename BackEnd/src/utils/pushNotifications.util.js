@@ -35,6 +35,10 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
   };
 
   const messaging = getMessaging();
+  if (!messaging) {
+    console.log('[push] skipped (firebase not configured) for userEmail:', emailKey);
+    return;
+  }
   const resp = await messaging.sendEachForMulticast(payload);
 
   const successCount = Number(resp?.successCount || 0);

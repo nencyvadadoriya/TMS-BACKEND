@@ -1,9 +1,16 @@
-const admin = require('firebase-admin');
+let admin;
+
+try {
+  admin = require('firebase-admin');
+} catch {
+  admin = null;
+}
 
 const normalizeEnvValue = (v) => String(v || '').trim().replace(/^['"]|['"]$/g, '');
 const normalizeBase64 = (v) => normalizeEnvValue(v).replace(/\s+/g, '');
 
 const initFirebaseAdmin = () => {
+  if (!admin) return null;
   if (admin.apps && admin.apps.length > 0) return admin;
 
   const rawBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
@@ -26,9 +33,7 @@ const initFirebaseAdmin = () => {
     throw new Error(`Failed to parse Firebase service account: ${e?.message || e}`);
   }
 
-  if (!credential) {
-    throw new Error('Firebase service account is not configured (set FIREBASE_SERVICE_ACCOUNT_BASE64 or FIREBASE_SERVICE_ACCOUNT_JSON)');
-  }
+  if (!credential) return null;
 
   admin.initializeApp({ credential });
   return admin;
@@ -36,7 +41,12 @@ const initFirebaseAdmin = () => {
 
 const getMessaging = () => {
   const app = initFirebaseAdmin();
-  return app.messaging();
+  if (!app) return null;
+  try {
+    return app.messaging();
+  } catch {
+    return null;
+  }
 };
 
 module.exports = {
