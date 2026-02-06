@@ -3,8 +3,10 @@ const express = require('express');
 const morgan = require("morgan")
 require("./src/config/db.confing")
 const cors = require("cors");
+const http = require('http');
+const { initSocket } = require('./src/realtime/socket');
 const app = express();
-const PORT = process.env.PORT || 9000;
+const PORT = process.env.PORT || 8100;
 const IS_VERCEL = Boolean(process.env.VERCEL);
 app.use(express.urlencoded());
 app.use(express.json({ limit: '2mb' }))
@@ -39,13 +41,16 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use('/api', require('./src/routes/index'))
+
 if (!IS_VERCEL) {
-    app.listen(PORT,(error)=>{
+    const server = http.createServer(app);
+    initSocket(server);
+    server.listen(PORT,(error)=>{
         if(error){
-            console.log("server not started")
+            console.log(`server not started ${error}`)
             return false;
         }
-            console.log("server is starting")
+            console.log(`server is starting ${PORT}`)
     })
 }
 

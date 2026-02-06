@@ -24,6 +24,8 @@ const { sendOtpEmail, sendAccountCreatedEmail } = require('../middleware/email.m
 
 const { _getEffectivePermissionsMap } = require('./access.controller');
 
+const { emitUserUpserted, emitUserDeleted } = require('../realtime/userEvents');
+
 
 
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
@@ -605,6 +607,22 @@ exports.registerUser = async (req, res) => {
 
 
         await newUser.save();
+
+        try {
+            emitUserUpserted({
+                id: newUser._id,
+                _id: newUser._id,
+                name: newUser.name,
+                email: newUser.email,
+                role: newUser.role,
+                managerId: newUser.managerId,
+                companyName: newUser.companyName,
+                assignedBrandIds: Array.isArray(newUser.assignedBrandIds) ? newUser.assignedBrandIds : [],
+                assignedCompanyIds: Array.isArray(newUser.assignedCompanyIds) ? newUser.assignedCompanyIds : [],
+            });
+        } catch (emitError) {
+            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
 
 
 
@@ -1962,6 +1980,22 @@ exports.createUser = async (req, res) => {
 
         await newUser.save();
 
+        try {
+            emitUserUpserted({
+                id: newUser._id,
+                _id: newUser._id,
+                name: newUser.name,
+                email: newUser.email,
+                role: newUser.role,
+                managerId: newUser.managerId,
+                companyName: newUser.companyName,
+                assignedBrandIds: Array.isArray(newUser.assignedBrandIds) ? newUser.assignedBrandIds : [],
+                assignedCompanyIds: Array.isArray(newUser.assignedCompanyIds) ? newUser.assignedCompanyIds : [],
+            });
+        } catch (emitError) {
+            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
+
 
 
         let emailSent = false;
@@ -2218,6 +2252,13 @@ exports.updateUser = async (req, res) => {
 
         ).select('-password');
 
+        try {
+            const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
+            if (obj) emitUserUpserted({ ...obj, id: obj._id || obj.id });
+        } catch (emitError) {
+            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
+
 
 
         if (!updatedUser) {
@@ -2393,6 +2434,12 @@ exports.deleteUser = async (req, res) => {
 
 
         const deletedUser = await User.findByIdAndDelete(id);
+
+        try {
+            emitUserDeleted({ userId: id, companyName: userToDelete?.companyName || '' });
+        } catch (emitError) {
+            console.error('emitUserDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
 
 
 

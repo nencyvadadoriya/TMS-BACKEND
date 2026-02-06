@@ -5,6 +5,10 @@ const User = require('../model/user.model');
 const Company = require('../model/Company.model');
 const TaskHistory = require('../model/TaskHistory.model');
 
+const { emitBrandUpserted, emitBrandDeleted } = require('../realtime/brandEvents');
+const { emitUserUpserted } = require('../realtime/userEvents');
+const { getEffectivePermissionForUser } = require('../middleware/permission.middleware');
+
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -49,8 +53,6 @@ const withAssignedBrandIds = async (user) => {
   try {
     const role = String(user?.role || '').toLowerCase();
     if (role !== 'manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am') return user;
-
-    if (Array.isArray(user?.assignedBrandIds) && user?.managerId && role !== 'md_manager') return user;
 
     const id = (user?.id || user?._id || '').toString();
     if (!mongoose.Types.ObjectId.isValid(id)) return user;
@@ -222,58 +224,28 @@ const assignBrandToUsersByEmail = async ({ brandId, rmEmail, amEmail }) => {
     const bid = (brandId || '').toString();
     if (!mongoose.Types.ObjectId.isValid(bid)) return;
 
-    const emails = [normalizeEmail(rmEmail), normalizeEmail(amEmail)].filter(Boolean);
+    const rmKey = normalizeEmail(rmEmail);
+    const amKey = normalizeEmail(amEmail);
+    const emails = [rmKey, amKey].filter(Boolean);
     if (!emails.length) return;
 
     const users = await User.find({ email: { $in: emails } })
-      .select('_id email')
+      .select('_id email managerId')
       .lean();
+
+    const byEmail = new Map((users || []).map((u) => [normalizeEmail(u?.email), u]));
+    const rmUser = rmKey ? byEmail.get(rmKey) : null;
+    const amUser = amKey ? byEmail.get(amKey) : null;
 
     const userIds = (users || [])
       .map((u) => (u?._id ? u._id.toString() : ''))
       .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
-    if (!userIds.length) return;
+    const uniqueUserIds = Array.from(new Set(userIds));
+    if (!uniqueUserIds.length) return;
 
     await User.updateMany(
-      { _id: { $in: userIds } },
-      { $addToSet: { assignedBrandIds: bid } }
-    );
-  } catch {
-    // ignore assignment errors
-  }
-};
-
-const assignBrandToSbmForCompany = async ({ brandId, company }) => {
-  try {
-    const bid = (brandId || '').toString();
-    if (!mongoose.Types.ObjectId.isValid(bid)) return;
-
-    const rawCompany = normalizeString(company);
-    if (!rawCompany) return;
-
-    const key = normalizeCompanyKey(rawCompany);
-    if (key !== 'speedecom') return;
-
-    const companyRx = companyNameToLooseRegex(rawCompany);
-    if (!companyRx) return;
-
-    const sbms = await User.find({
-      role: { $regex: /^sbm$/i },
-      companyName: { $regex: companyRx },
-      isDeleted: { $ne: true }
-    })
-      .select('_id')
-      .lean();
-
-    const sbmIds = (sbms || [])
-      .map((u) => (u?._id ? u._id.toString() : ''))
-      .filter((id) => mongoose.Types.ObjectId.isValid(id));
-
-    if (!sbmIds.length) return;
-
-    await User.updateMany(
-      { _id: { $in: sbmIds } },
+      { _id: { $in: uniqueUserIds } },
       { $addToSet: { assignedBrandIds: bid } }
     );
   } catch {
@@ -292,6 +264,8 @@ exports.createBrand = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(ownerId)) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
+
+    const creatorRole = String(req.user?.role || '').toLowerCase();
 
     const payload = buildBrandPayload(req.body);
     if (!payload.name) {
@@ -324,10 +298,36 @@ exports.createBrand = async (req, res) => {
         rmEmail: req.body?.rmEmail,
         amEmail: req.body?.amEmail
       });
-      await assignBrandToSbmForCompany({
-        brandId: existing._id,
-        company: existing.company || req.body?.company
-      });
+
+      if (creatorRole === 'sbm') {
+        try {
+          const updatedUser = await User.findByIdAndUpdate(
+            ownerId,
+            { $addToSet: { assignedBrandIds: existing._id } },
+            { new: true }
+          ).lean();
+          if (updatedUser?._id) {
+            try {
+              emitUserUpserted({
+                ...updatedUser,
+                id: updatedUser._id,
+                assignedBrandIds: Array.isArray(updatedUser.assignedBrandIds) ? updatedUser.assignedBrandIds : [],
+                assignedCompanyIds: Array.isArray(updatedUser.assignedCompanyIds) ? updatedUser.assignedCompanyIds : []
+              });
+            } catch {
+              // ignore
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      try {
+        emitBrandUpserted(formatBrand(existing.toObject()));
+      } catch (emitError) {
+        console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+      }
 
       return res.status(200).json({ success: true, data: formatBrand(existing.toObject()) });
     }
@@ -354,10 +354,36 @@ exports.createBrand = async (req, res) => {
       rmEmail: req.body?.rmEmail,
       amEmail: req.body?.amEmail
     });
-    await assignBrandToSbmForCompany({
-      brandId: created._id,
-      company: created.company || req.body?.company
-    });
+
+    if (creatorRole === 'sbm') {
+      try {
+        const updatedUser = await User.findByIdAndUpdate(
+          ownerId,
+          { $addToSet: { assignedBrandIds: created._id } },
+          { new: true }
+        ).lean();
+        if (updatedUser?._id) {
+          try {
+            emitUserUpserted({
+              ...updatedUser,
+              id: updatedUser._id,
+              assignedBrandIds: Array.isArray(updatedUser.assignedBrandIds) ? updatedUser.assignedBrandIds : [],
+              assignedCompanyIds: Array.isArray(updatedUser.assignedCompanyIds) ? updatedUser.assignedCompanyIds : []
+            });
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      emitBrandUpserted(formatBrand(created.toObject()));
+    } catch (emitError) {
+      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
 
     res.status(201).json({ success: true, data: formatBrand(created.toObject()) });
   } catch (error) {
@@ -373,12 +399,16 @@ exports.bulkUpsertBrands = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
+    const creatorRole = String(req.user?.role || '').toLowerCase();
+    const shouldAutoAssignCreator = creatorRole === 'sbm';
+
     const inputBrands = Array.isArray(req.body?.brands) ? req.body.brands : [];
     if (!inputBrands.length) {
       return res.status(400).json({ success: false, message: 'brands array is required' });
     }
 
     const results = [];
+    const upsertedBrandIds = new Set();
 
     for (const raw of inputBrands) {
       const payload = buildBrandPayload(raw);
@@ -400,7 +430,11 @@ exports.bulkUpsertBrands = async (req, res) => {
               userEmail: normalizeEmail(req.user?.email),
               userRole: req.user?.role || 'user',
               timestamp: new Date(),
-              metadata: { name: payload.name, company: payload.company, clientId: raw?.id || raw?.clientId || '' }
+              metadata: {
+                name: payload.name,
+                company: payload.company,
+                clientId: raw?.id || raw?.clientId || ''
+              }
             }
           }
         },
@@ -412,16 +446,43 @@ exports.bulkUpsertBrands = async (req, res) => {
         ...formatBrand(doc.toObject())
       });
 
+      if (doc?._id && mongoose.Types.ObjectId.isValid(String(doc._id))) {
+        upsertedBrandIds.add(String(doc._id));
+      }
+
       await assignBrandToUsersByEmail({
         brandId: doc?._id,
         rmEmail: raw?.rmEmail,
         amEmail: raw?.amEmail
       });
 
-      await assignBrandToSbmForCompany({
-        brandId: doc?._id,
-        company: payload.company
-      });
+      try {
+        emitBrandUpserted(formatBrand(doc.toObject()));
+      } catch {
+        // ignore
+      }
+    }
+
+    if (shouldAutoAssignCreator && upsertedBrandIds.size > 0) {
+      try {
+        const updatedUser = await User.findByIdAndUpdate(ownerId, {
+          $addToSet: { assignedBrandIds: { $each: Array.from(upsertedBrandIds) } }
+        }, { new: true }).lean();
+        if (updatedUser?._id) {
+          try {
+            emitUserUpserted({
+              ...updatedUser,
+              id: updatedUser._id,
+              assignedBrandIds: Array.isArray(updatedUser.assignedBrandIds) ? updatedUser.assignedBrandIds : [],
+              assignedCompanyIds: Array.isArray(updatedUser.assignedCompanyIds) ? updatedUser.assignedCompanyIds : []
+            });
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
 
     res.status(200).json({ success: true, data: results });
@@ -663,6 +724,27 @@ exports.getBrands = async (req, res) => {
 
     let query = {};
 
+    const requestedCompany = normalizeString(req.query.company);
+    const wantsCompanyFilter = requestedCompany && requestedCompany !== 'all';
+    let allowCompanyWideForAssignment = false;
+    if (
+      wantsCompanyFilter &&
+      requesterId &&
+      mongoose.Types.ObjectId.isValid(requesterId) &&
+      role !== 'admin' &&
+      role !== 'super_admin' &&
+      role !== 'md_manager'
+    ) {
+      try {
+        const assignPerm = await getEffectivePermissionForUser(requesterId, 'assign_page');
+        const brandAssignPerm = await getEffectivePermissionForUser(requesterId, 'brand_assign');
+        allowCompanyWideForAssignment =
+          String(assignPerm || '').toLowerCase() !== 'deny' || String(brandAssignPerm || '').toLowerCase() !== 'deny';
+      } catch {
+        allowCompanyWideForAssignment = false;
+      }
+    }
+
     if (role === 'admin' || role === 'super_admin') {
       query = {};
     } else if (role === 'md_manager') {
@@ -675,6 +757,8 @@ exports.getBrands = async (req, res) => {
           company: { $regex: `^${escapeRegex(name)}$`, $options: 'i' }
         }))
       };
+    } else if (allowCompanyWideForAssignment) {
+      query = {};
     } else if (role === 'manager') {
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {
@@ -720,7 +804,8 @@ exports.getBrands = async (req, res) => {
     }
 
     if (req.query.company && req.query.company !== 'all') {
-      query.company = req.query.company;
+      const company = normalizeString(req.query.company);
+      query.company = { $regex: `^${escapeRegex(company)}$`, $options: 'i' };
     }
 
     const includeDeleted = String(req.query?.includeDeleted || '').toLowerCase() === 'true';
@@ -1034,6 +1119,12 @@ exports.updateBrand = async (req, res) => {
 
     await brand.save();
 
+    try {
+      emitBrandUpserted(formatBrand(brand.toObject()));
+    } catch (emitError) {
+      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Brand updated successfully',
@@ -1129,6 +1220,12 @@ exports.deleteBrand = async (req, res) => {
     // Delete the brand
     await Brand.findByIdAndDelete(id);
 
+    try {
+      emitBrandDeleted({ brandId: brand?._id, companyName: brand?.company });
+    } catch (emitError) {
+      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Brand deleted successfully',
@@ -1222,6 +1319,12 @@ exports.softDeleteBrand = async (req, res) => {
 
     await deletedBrand.save();
 
+    try {
+      emitBrandDeleted({ brandId: deletedBrand?._id, companyName: deletedBrand?.company });
+    } catch (emitError) {
+      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
+
     return res.json({
       success: true,
       message: 'Brand deleted successfully',
@@ -1296,6 +1399,12 @@ exports.restoreBrand = async (req, res) => {
     });
     
     await restoredBrand.save();
+
+    try {
+      emitBrandUpserted(formatBrand(restoredBrand.toObject()));
+    } catch (emitError) {
+      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
     
     res.json({
       success: true,
@@ -1367,6 +1476,12 @@ exports.hardDeleteBrand = async (req, res) => {
     
     // Permanent delete
     await Brand.findByIdAndDelete(id);
+
+    try {
+      emitBrandDeleted({ brandId: brand?._id, companyName: brand?.company });
+    } catch (emitError) {
+      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
+    }
     
     res.json({
       success: true,

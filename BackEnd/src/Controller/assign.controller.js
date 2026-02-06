@@ -7,6 +7,9 @@ const UserBrandTaskType = require('../model/UserBrandTaskType.model');
 const CompanyBrandTaskType = require('../model/CompanyBrandTaskType.model');
 const Company = require('../model/Company.model');
 
+const { emitAssignmentUpserted, emitAssignmentsBulkUpserted } = require('../realtime/assignmentEvents');
+const { emitUserUpserted } = require('../realtime/userEvents');
+
 const normalizeText = (v) => (v || '').toString().trim();
 
 function escapeRegex(value) {
@@ -110,6 +113,12 @@ exports.assignCompaniesToMdManager = async (req, res) => {
       .select('_id name email role assignedCompanyIds')
       .lean();
 
+    try {
+      emitUserUpserted({ ...updated, id: updated?._id });
+    } catch {
+      // ignore
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -177,6 +186,12 @@ exports.assignCompaniesToObManager = async (req, res) => {
       .select('_id name email role assignedCompanyIds')
       .lean();
 
+    try {
+      emitUserUpserted({ ...updated, id: updated?._id });
+    } catch {
+      // ignore
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -243,6 +258,12 @@ exports.assignCompaniesToSbm = async (req, res) => {
     )
       .select('_id name email role assignedCompanyIds')
       .lean();
+
+    try {
+      emitUserUpserted({ ...updated, id: updated?._id });
+    } catch {
+      // ignore
+    }
 
     return res.status(200).json({
       success: true,
@@ -400,6 +421,7 @@ exports.upsertAssignment = async (req, res) => {
     const companyName = normalizeText(req.body?.companyName);
     const userId = toObjectIdString(req.body?.userId);
     const brandName = normalizeText(req.body?.brandName);
+    const skipDerived = Boolean(req.body?.skipDerived);
 
     const actor = req.user || {};
     const actorId = (actor.id || actor._id || '').toString();
@@ -490,7 +512,7 @@ exports.upsertAssignment = async (req, res) => {
       { new: true, upsert: true }
     ).lean();
 
-    if (taskTypeIds.length > 0) {
+    if (!skipDerived && taskTypeIds.length > 0) {
       try {
         const owner = await User.findById(userId).select('_id role managerId').lean();
         const role = normalizeRole(owner?.role);
@@ -578,6 +600,21 @@ exports.upsertAssignment = async (req, res) => {
       }
     }
 
+    try {
+      emitAssignmentUpserted({ companyName: canonicalCompanyName, userId, brandId });
+    } catch {
+      // ignore
+    }
+
+    try {
+      const updatedUser = await User.findById(userId)
+        .select('_id name email role companyName assignedBrandIds assignedCompanyIds managerId')
+        .lean();
+      if (updatedUser) emitUserUpserted({ ...updatedUser, id: updatedUser._id });
+    } catch {
+      // ignore
+    }
+
     return res.status(200).json({ success: true, data: { ...doc, id: doc._id } });
   } catch (error) {
     if (error?.code === 11000) {
@@ -596,6 +633,7 @@ exports.bulkUpsertAssignments = async (req, res) => {
     const companyName = normalizeText(req.body?.companyName);
     const userId = toObjectIdString(req.body?.userId);
     const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
+    const skipDerived = Boolean(req.body?.skipDerived);
 
     const actor = req.user || {};
     const actorId = (actor.id || actor._id || '').toString();
@@ -682,7 +720,7 @@ exports.bulkUpsertAssignments = async (req, res) => {
 
     const result = await UserBrandTaskType.bulkWrite(ops, { ordered: false });
 
-    try {
+    if (!skipDerived) try {
       const owner = await User.findById(userId).select('_id role managerId').lean();
       const role = normalizeRole(owner?.role);
       const derived = [];
@@ -803,6 +841,21 @@ exports.bulkUpsertAssignments = async (req, res) => {
           await User.findByIdAndUpdate(userId, { $pull: { assignedBrandIds: { $in: toRemove } } });
         }
       }
+    } catch {
+      // ignore
+    }
+
+    try {
+      emitAssignmentsBulkUpserted({ companyName: canonicalCompanyName, userId });
+    } catch {
+      // ignore
+    }
+
+    try {
+      const updatedUser = await User.findById(userId)
+        .select('_id name email role companyName assignedBrandIds assignedCompanyIds managerId')
+        .lean();
+      if (updatedUser) emitUserUpserted({ ...updatedUser, id: updatedUser._id });
     } catch {
       // ignore
     }

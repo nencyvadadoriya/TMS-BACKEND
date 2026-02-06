@@ -8,6 +8,8 @@ const TaskHistory = require('../model/TaskHistory.model');
 const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
 const { sendTaskAssignedPush } = require('../utils/pushNotifications.util');
+const { emitTaskUpserted } = require('../realtime/taskEvents');
+
 const {
     recordStatusChange,
     recordApprovalChange,
@@ -15,717 +17,297 @@ const {
     recordTaskDeleted
 } = require('../utils/taskAudit.util');
 
-const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
+const normalizeText = (value) => (value == null ? '' : String(value)).trim();
+
+const normalizeEmail = (email) => normalizeText(email).toLowerCase();
+
+const roleOf = (user) => {
+    const raw = normalizeText(user?.role || '');
+    return raw.toLowerCase().replace(/[\s-]+/g, '_');
+};
 
 const safeObjectIdString = (value) => {
-    if (!value) return '';
-    if (typeof value === 'string') return value.trim();
-    if (typeof value === 'object') return String(value._id || value.id || '').trim();
+    if (value == null) return '';
+    try {
+        if (typeof value === 'string') return value;
+        if (typeof value === 'object' && typeof value.toString === 'function') return value.toString();
+    } catch {
+        return '';
+    }
     return '';
 };
 
-const roleOf = (user) => String(user?.role || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
+const isAssistantRoleKey = (roleKey) => {
+    const key = roleOf({ role: roleKey });
+    return key === 'assistant'
+        || key === 'sub_assistance'
+        || key === 'sub_assistence'
+        || key === 'sub_assist'
+        || key === 'sub_assistant';
+};
 
-const resolveTaskScopeEmails = async (user) => {
-    const role = roleOf(user);
-    const requesterEmail = normalizeEmail(user?.email);
-    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
-
-    const set = new Set();
-    if (requesterEmail) set.add(requesterEmail);
-    if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) return set;
-
-    if (role !== 'sbm' && role !== 'rm' && role !== 'am' && role !== 'ar') return set;
-
-    const dbUser = await User.findById(requesterId).select('_id email role managerId').lean();
-    if (!dbUser) return set;
-
-    const managerId = safeObjectIdString(dbUser.managerId);
-
-    if (role === 'rm') {
-        const reports = await User.find({ managerId: dbUser._id, role: { $in: ['am', 'ar'] }, isDeleted: { $ne: true } })
-            .select('email')
-            .lean();
-        (reports || []).forEach((u) => {
-            const e = normalizeEmail(u?.email);
-            if (e) set.add(e);
-        });
-    }
-
-    if (role === 'am' || role === 'ar') {
-        if (managerId && mongoose.Types.ObjectId.isValid(managerId)) {
-            const rm = await User.findById(managerId).select('_id email managerId').lean();
-            const rmEmail = normalizeEmail(rm?.email);
-            if (rmEmail) set.add(rmEmail);
+async function resolveBrandNameForTask(task) {
+    try {
+        const brandId = task?.brandId ? String(task.brandId) : '';
+        if (brandId && mongoose.Types.ObjectId.isValid(brandId)) {
+            const brandDoc = await Brand.findById(brandId).select('name').lean();
+            const name = normalizeText(brandDoc?.name);
+            if (name) return name;
         }
+    } catch {
+        // ignore
     }
 
-    if (role === 'sbm') {
-        const rms = await User.find({ managerId: dbUser._id, role: { $in: ['rm'] }, isDeleted: { $ne: true } })
+    return normalizeText(task?.brand || '');
+}
+
+async function maybeAddBrandToAssignee({ assignedToEmail, brandId }) {
+    try {
+        const emailKey = normalizeEmail(assignedToEmail);
+        const brandIdKey = brandId ? String(brandId) : '';
+
+        if (!emailKey) return;
+        if (!brandIdKey || !mongoose.Types.ObjectId.isValid(brandIdKey)) return;
+
+        await User.updateOne(
+            { email: emailKey },
+            { $addToSet: { assignedBrandIds: brandIdKey }, $set: { updatedAt: new Date() } }
+        );
+    } catch {
+        // ignore
+    }
+}
+
+async function resolveTaskScopeEmails(user) {
+    const scope = new Set();
+    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+    const requesterEmail = normalizeEmail(user?.email);
+
+    if (requesterEmail) scope.add(requesterEmail);
+
+    if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) {
+        return scope;
+    }
+
+    const queue = [requesterId];
+    const visited = new Set(queue);
+
+    while (queue.length > 0) {
+        const parentId = queue.shift();
+
+        const children = await User.find({ managerId: parentId })
             .select('_id email')
             .lean();
-        const rmIds = (rms || []).map((u) => u?._id).filter(Boolean);
-        (rms || []).forEach((u) => {
-            const e = normalizeEmail(u?.email);
-            if (e) set.add(e);
-        });
 
-        if (rmIds.length > 0) {
-            const reports = await User.find({ managerId: { $in: rmIds }, role: { $in: ['am', 'ar'] }, isDeleted: { $ne: true } })
-                .select('email')
-                .lean();
-            (reports || []).forEach((u) => {
-                const e = normalizeEmail(u?.email);
-                if (e) set.add(e);
-            });
+        for (const child of children || []) {
+            const emailKey = normalizeEmail(child?.email);
+            if (emailKey) scope.add(emailKey);
+
+            const childId = safeObjectIdString(child?._id);
+            if (childId && mongoose.Types.ObjectId.isValid(childId) && !visited.has(childId)) {
+                visited.add(childId);
+                queue.push(childId);
+            }
         }
     }
 
-    return set;
-};
+    return scope;
+}
 
-const isAssistantRoleKey = (roleKey) => {
-    const key = String(roleKey || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    if (key === 'assistant' || key.includes('assistant')) return true;
-    return key === 'sub_assistance' || key === 'sub_assistence' || key === 'sub_assist' || key === 'sub_assistant';
-};
+async function userCanAccessTask(task, user) {
+    const requesterRole = roleOf(user);
+    const requesterEmail = normalizeEmail(user?.email);
 
-const canViewTaskReviews = (user) => {
-    return Boolean(user);
-};
+    if (requesterRole === 'admin' || requesterRole === 'super_admin') return true;
 
-const canSubmitTaskReview = (user) => {
-    const role = roleOf(user);
-    return role === 'admin' || role === 'super_admin' || role === 'manager' || role === 'md_manager';
-};
-
-const getActorFromRequest = (req) => {
-    const user = req.user || {};
-
-    const actorId = user.id || user._id || user.userId;
-    return {
-        id: actorId ? actorId.toString() : 'system',
-        name: user.name || 'System',
-        email: user.email || 'system@task-app.local',
-        role: user.role || 'system'
-    };
-};
-
-const isSameDay = (a, b) => {
-    try {
-        const d1 = new Date(a);
-        const d2 = new Date(b);
-        return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
-    } catch {
-        return false;
-    }
-};
-
-const userIsTaskAssigner = (task, user) => {
-    if (!user || !task) return false;
-    const email = normalizeEmail(user.email);
-    return email && normalizeEmail(task.assignedBy) === email;
-};
-
-const userCanAccessTask = async (task, user) => {
-    if (!user || !task) return false;
-    const userRole = roleOf(user);
-    if (userRole === 'admin' || userRole === 'super_admin') return true;
-
-    const requesterEmail = normalizeEmail(user.email);
-    const assignedToEmail = normalizeEmail(task.assignedTo);
-    const assignedByEmail = normalizeEmail(task.assignedBy);
-    const obManagerEmail = normalizeEmail(task.obManagerEmail);
-
-    if (userRole === 'sbm' || userRole === 'rm' || userRole === 'am' || userRole === 'ar') {
-        const scope = await resolveTaskScopeEmails(user);
-        if (scope.size === 0) return false;
-        if (assignedToEmail && scope.has(assignedToEmail)) return true;
-        if (assignedByEmail && scope.has(assignedByEmail)) return true;
-        return false;
-    }
-
-    if (userRole === 'manager') {
-        if (!requesterEmail) return false;
-        if (assignedByEmail && assignedByEmail === requesterEmail) return true;
-
-        if (assignedToEmail && assignedToEmail === requesterEmail) {
-            const assignerUser = assignedByEmail
-                ? await User.findOne({ email: assignedByEmail }).select('role').lean()
-                : null;
-            return roleOf(assignerUser) === 'md_manager';
-        }
-
-        return false;
-    }
+    const assignedToEmail = normalizeEmail(task?.assignedTo);
+    const assignedByEmail = normalizeEmail(task?.assignedBy);
 
     if (requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) return true;
 
-    // OB Manager should see only tasks routed to them (even after they reassign to assistants)
-    if (userRole === 'ob_manager') {
-        if (!requesterEmail) return false;
-        if (obManagerEmail && obManagerEmail === requesterEmail) return true;
-        if (assignedToEmail && assignedToEmail === requesterEmail) return true;
-        try {
-            const [reqUser, assigneeUser] = await Promise.all([
-                User.findOne({ email: requesterEmail }).select('companyName').lean(),
-                assignedToEmail ? User.findOne({ email: assignedToEmail }).select('companyName role').lean() : Promise.resolve(null)
-            ]);
-            const reqCompany = (reqUser?.companyName || '').toString().trim().toLowerCase();
-            const assCompany = (assigneeUser?.companyName || '').toString().trim().toLowerCase();
-            const assRole = roleOf(assigneeUser);
-            if (reqCompany && assCompany && reqCompany === assCompany && isAssistantRoleKey(assRole)) return true;
-        } catch {
-            // ignore
+    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+        const scope = await resolveTaskScopeEmails(user);
+        return scope.has(assignedToEmail) || scope.has(assignedByEmail);
+    }
+
+    if (requesterRole === 'ob_manager') {
+        const obEmail = normalizeEmail(task?.obManagerEmail);
+        if (requesterEmail && obEmail && obEmail === requesterEmail) return true;
+
+        const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+        let requesterCompany = normalizeText(user?.companyName || user?.company);
+        if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+            const doc = await User.findById(requesterId).select('companyName').lean();
+            requesterCompany = normalizeText(doc?.companyName);
         }
+
+        const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+        if (companySafe) {
+            const assistantDocs = await User.find({
+                companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
+            }).select('email').lean();
+
+            const assistantEmails = new Set(
+                (assistantDocs || []).map((u) => normalizeEmail(u?.email)).filter(Boolean)
+            );
+
+            if (assistantEmails.has(assignedToEmail)) return true;
+        }
+
         return false;
     }
 
+    if (requesterRole === 'manager') {
+        const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
+        const mdEmails = new Set((mdManagers || []).map((u) => normalizeEmail(u?.email)).filter(Boolean));
+        return requesterEmail && (
+            assignedByEmail === requesterEmail
+            || (assignedToEmail === requesterEmail && mdEmails.has(assignedByEmail))
+        );
+    }
+
     return false;
-};
+}
 
-const managerAllowedBrandIdSet = async (user) => {
-    const actorId = (user?.id || user?._id || user?.userId || '').toString();
-    if (!actorId || !mongoose.Types.ObjectId.isValid(actorId)) return new Set();
-
-    const ids = new Set();
-    let currentId = actorId;
-    for (let depth = 0; depth < 8; depth++) {
-        const dbUser = await User.findById(currentId).select('assignedBrandIds managerId').lean();
-        if (!dbUser) break;
-        const brandIds = Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds.map(String) : [];
-        brandIds.forEach((id) => {
-            if (id) ids.add(id);
-        });
-
-        const nextManagerId = (dbUser?.managerId || '').toString();
-        if (!nextManagerId || !mongoose.Types.ObjectId.isValid(nextManagerId)) break;
-        currentId = nextManagerId;
-    }
-
-    return ids;
-};
-
-const resolveBrandFromRequest = async ({ brandId, brandName, companyName }) => {
-    const id = brandId ? brandId.toString() : '';
-    if (id && mongoose.Types.ObjectId.isValid(id)) {
-        const doc = await Brand.findById(id).select('name company owner').lean();
-        if (doc) {
-            return {
-                brandId: doc._id,
-                brand: (doc.name || '').toString(),
-                companyName: (doc.company || companyName || '').toString(),
-                owner: doc.owner || null
-            };
-        }
-    }
-
-    const name = (brandName || '').toString().trim();
-    const company = (companyName || '').toString().trim();
-    if (!name) {
-        return { brandId: null, brand: '', companyName: company, owner: null };
-    }
-
-    const safeName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const safeCompany = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const query = company
-        ? { name: { $regex: `^${safeName}$`, $options: 'i' }, company: { $regex: `^${safeCompany}$`, $options: 'i' } }
-        : { name: { $regex: `^${safeName}$`, $options: 'i' } };
-
-    const doc = await Brand.findOne(query).select('name company owner').lean();
-    if (!doc) {
-        return { brandId: null, brand: name, companyName: company, owner: null };
-    }
-
+function getActorFromRequest(req) {
+    const id = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
     return {
-        brandId: doc._id,
-        brand: (doc.name || name).toString(),
-        companyName: (doc.company || company).toString(),
-        owner: doc.owner || null
+        id,
+        name: normalizeText(req.user?.name || 'User'),
+        email: normalizeEmail(req.user?.email),
+        role: roleOf(req.user)
     };
-};
+}
 
-const resolveBrandNameForTask = async (task) => {
-    try {
-        const existing = (task?.brand || '').toString().trim();
-        if (existing) return existing;
+function userIsTaskAssigner(task, user) {
+    return normalizeEmail(task?.assignedBy) && normalizeEmail(task?.assignedBy) === normalizeEmail(user?.email);
+}
 
-        const brandId = task?.brandId ? task.brandId.toString() : '';
-        if (!brandId || !mongoose.Types.ObjectId.isValid(brandId)) return '';
+function canViewTaskReviews(user) {
+    const r = roleOf(user);
+    return r === 'admin' || r === 'super_admin' || r === 'ob_manager';
+}
 
-        const brandDoc = await Brand.findById(brandId).select('name').lean();
-        return (brandDoc?.name || '').toString().trim();
-    } catch {
-        return (task?.brand || '').toString().trim();
-    }
-};
-
-const maybeAddBrandToAssignee = async ({ assignedToEmail, brandId }) => {
-    try {
-        const email = normalizeEmail(assignedToEmail);
-        const id = brandId ? brandId.toString() : '';
-
-        if (!email) return;
-        if (!id || !mongoose.Types.ObjectId.isValid(id)) return;
-
-        const assignee = await User.findOne({ email }).select('_id role assignedBrandIds').lean();
-        const role = roleOf(assignee);
-        if (role !== 'assistant' && role !== 'manager') return;
-
-        await User.findByIdAndUpdate(assignee._id, {
-            $addToSet: { assignedBrandIds: id }
-        });
-    } catch {
-        return;
-    }
-};
-
-const formatOverdueDuration = (ms) => {
-    const safeMs = Math.max(0, Number(ms) || 0);
-    const totalMinutes = Math.floor(safeMs / (60 * 1000));
-    const days = Math.floor(totalMinutes / (60 * 24));
-    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-    const minutes = totalMinutes % 60;
-    return { days, hours, minutes };
-};
+function canSubmitTaskReview(user) {
+    const r = roleOf(user);
+    return r === 'admin' || r === 'super_admin' || r === 'manager' || r === 'md_manager' || r === 'ob_manager';
+}
 
 exports.addTask = async (req, res) => {
     try {
-        console.log(" Task creation request body:", req.body);
+        const title = normalizeText(req.body?.title);
+        const assignedTo = normalizeEmail(req.body?.assignedTo);
+        const dueDateRaw = req.body?.dueDate;
+        const dueDate = dueDateRaw ? new Date(dueDateRaw) : null;
 
-        const {
-            title,
-            assignedTo,
-            dueDate,
-            priority = 'medium',
-            taskType = 'regular',
-            type,
-            companyName,
-            company,
-            brand = '',
-            brandId = null,
-            status = 'pending'
-        } = req.body;
-
-        // Always take assignedBy from authenticated user to prevent spoofing
-        const assignedBy = (req.user && req.user.email) ? req.user.email : 'admin@example.com';
-
-        const normalizedAssignedTo = normalizeEmail(assignedTo);
-        const normalizedAssignedBy = normalizeEmail(assignedBy);
-
-        // Validation
-        if (!title || !normalizedAssignedTo || !dueDate) {
-            return res.status(400).json({
-                success: false,
-                message: 'Title, assignee email, and due date are required'
-            });
+        if (!title) {
+            return res.status(400).json({ success: false, message: 'Task title is required' });
         }
 
-        // Optional: Check if assignedTo email exists in users
-        try {
-            const assignedUser = await User.findOne({ email: normalizedAssignedTo });
-            if (!assignedUser) {
-                console.log(` Warning: User with email ${normalizedAssignedTo} not found in database`);
-            }
-        } catch (userError) {
-            console.log("User check skipped or failed:", userError.message);
+        if (!assignedTo) {
+            return res.status(400).json({ success: false, message: 'Assignee email is required' });
+        }
+
+        if (!dueDate || Number.isNaN(dueDate.getTime())) {
+            return res.status(400).json({ success: false, message: 'Due date is required' });
         }
 
         const requesterRole = roleOf(req.user);
-
-        if (requesterRole === 'rm' || requesterRole === 'am') {
-            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
-            if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied'
-                });
-            }
-
-            const [requesterDb, assigneeDb] = await Promise.all([
-                User.findById(requesterId).select('_id email role managerId').lean(),
-                User.findOne({ email: normalizedAssignedTo }).select('_id email role managerId').lean()
-            ]);
-
-            if (!requesterDb) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied'
-                });
-            }
-
-            if (!assigneeDb) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Assignee user not found'
-                });
-            }
-
-            const assigneeRole = roleOf(assigneeDb);
-            const allowedForRm = new Set(['rm', 'am', 'sbm', 'admin', 'super_admin']);
-            const allowedForAm = new Set(['am', 'rm', 'sbm', 'admin', 'super_admin']);
-            const allowed = requesterRole === 'rm' ? allowedForRm : allowedForAm;
-
-            if (!allowed.has(assigneeRole)) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied'
-                });
-            }
-
-            if (assigneeRole === requesterRole) {
-                if (safeObjectIdString(assigneeDb._id) !== safeObjectIdString(requesterDb._id)) {
-                    return res.status(403).json({ success: false, message: 'Access denied' });
-                }
-                // Self-assignment allowed for RM/AM
-            }
-
-            if (requesterRole === 'rm' && assigneeRole === 'am') {
-                const managerIdStr = safeObjectIdString(assigneeDb.managerId);
-                if (!managerIdStr || managerIdStr !== requesterId) {
-                    return res.status(403).json({ success: false, message: 'Access denied' });
-                }
-            }
-
-            if (requesterRole === 'am' && assigneeRole === 'rm') {
-                const managerIdStr = safeObjectIdString(requesterDb.managerId);
-                if (!managerIdStr || managerIdStr !== safeObjectIdString(assigneeDb._id)) {
-                    return res.status(403).json({ success: false, message: 'Access denied' });
-                }
-            }
-
-            if (assigneeRole === 'sbm') {
-                if (requesterRole === 'rm') {
-                    const sbmId = safeObjectIdString(requesterDb.managerId);
-                    if (!sbmId || sbmId !== safeObjectIdString(assigneeDb._id)) {
-                        return res.status(403).json({ success: false, message: 'Access denied' });
-                    }
-                } else {
-                    const rmId = safeObjectIdString(requesterDb.managerId);
-                    if (!rmId || !mongoose.Types.ObjectId.isValid(rmId)) {
-                        return res.status(403).json({ success: false, message: 'Access denied' });
-                    }
-                    const rm = await User.findById(rmId).select('managerId').lean();
-                    const sbmId = safeObjectIdString(rm?.managerId);
-                    if (!sbmId || sbmId !== safeObjectIdString(assigneeDb._id)) {
-                        return res.status(403).json({ success: false, message: 'Access denied' });
-                    }
-                }
-            }
+        const assignedBy = normalizeEmail(req.user?.email);
+        if (!assignedBy) {
+            return res.status(400).json({ success: false, message: 'Invalid assigner' });
         }
 
-        let obManagerEmail = null;
+        const priority = normalizeText(req.body?.priority) || 'medium';
+        const taskType = normalizeText(req.body?.taskType || req.body?.type) || 'regular';
 
-        // Create new task object
-        const effectiveCompanyName = (companyName || company || '').toString();
-        const effectiveTaskType = (taskType || type || 'regular').toString();
+        const rawCompanyName = normalizeText(req.body?.companyName || req.body?.company);
+        const requesterCompany = normalizeText(req.user?.companyName || req.user?.company);
+        const companyName = (requesterRole === 'admin' || requesterRole === 'super_admin')
+            ? (rawCompanyName || requesterCompany)
+            : (requesterCompany || rawCompanyName);
 
-        // Enforce manager restrictions
-        if (requesterRole === 'manager' || requesterRole === 'md_manager') {
-
-            // Managers can assign tasks only to managers (plus OB manager). MD Manager can also assign to MD Manager.
-            try {
-                const assigneeUser = await User.findOne({ email: normalizedAssignedTo }).select('role').lean();
-                const assigneeRole = roleOf(assigneeUser);
-                const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
-                const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
-                const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
-                if (assigneeRole && !isAllowed) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
-                    });
-                }
-
-                obManagerEmail = assigneeRole === 'ob_manager' ? normalizedAssignedTo : null;
-            } catch {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
-                });
-            }
-
-            const normalizedType = effectiveTaskType.toString().trim().toLowerCase();
-            const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
-            if (normalizedType === 'other work' && keyuriEmail && normalizedAssignedTo === keyuriEmail) {
-                obManagerEmail = keyuriEmail;
-            }
-            if (normalizedType === 'company' && requesterRole !== 'md_manager') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Managers cannot assign company-level tasks'
-                });
-            }
-
-            const resolved = await resolveBrandFromRequest({
-                brandId,
-                brandName: brand,
-                companyName: effectiveCompanyName
-            });
-
-            const resolvedBrandId = resolved.brandId ? resolved.brandId.toString() : '';
-
-            if (requesterRole === 'manager') {
-                const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
-                const requesterId = (req.user?.id || req.user?._id || req.user?.userId || '').toString();
-                const isOwner = requesterId && resolved?.owner && resolved.owner.toString() === requesterId;
-
-                if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
-                    return res.status(400).json({
-                        success: false,
-                        message: 'Managers must assign tasks to an allowed brand'
-                    });
-                }
-
-                if (!allowedBrandIds.has(resolvedBrandId) && !isOwner) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'You are not allowed to assign tasks for this brand'
-                    });
-                }
-
-                if (isOwner && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
-                    await User.findByIdAndUpdate(requesterId, {
-                        $addToSet: { assignedBrandIds: resolvedBrandId }
-                    });
-                }
-
-                // Force canonical brand/company fields from Brand document
-                req.body.brandId = resolved.brandId;
-                req.body.brand = resolved.brand;
-                req.body.companyName = resolved.companyName;
-            } else {
-                // md_manager: allow any brand. If it exists, normalize it; if not, keep provided values.
-                if (resolvedBrandId && mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
-                    req.body.brandId = new mongoose.Types.ObjectId(resolvedBrandId);
-                    req.body.brand = resolved.brand;
-                    req.body.companyName = resolved.companyName;
-                } else {
-                    req.body.brandId = null;
-                    req.body.brand = (brand || '').toString();
-                    req.body.companyName = (effectiveCompanyName || '').toString();
-                }
-            }
+        let brandId = req.body?.brandId ? String(req.body.brandId) : '';
+        if (!brandId || !mongoose.Types.ObjectId.isValid(brandId)) {
+            brandId = '';
         }
 
-        let finalCompanyName = (req.body.companyName || effectiveCompanyName || '').toString().trim();
-        if (!finalCompanyName) {
-            try {
-                const assigneeCompany = await User.findOne({ email: normalizedAssignedTo }).select('companyName').lean();
-                finalCompanyName = (assigneeCompany?.companyName || '').toString().trim();
-            } catch {
-                // ignore
-            }
+        let brandName = normalizeText(req.body?.brand);
+        if (brandId && !brandName) {
+            const brandDoc = await Brand.findById(brandId).select('name').lean();
+            brandName = normalizeText(brandDoc?.name);
         }
-        if (!finalCompanyName) {
-            try {
-                const creatorCompany = await User.findOne({ email: normalizedAssignedBy }).select('companyName').lean();
-                finalCompanyName = (creatorCompany?.companyName || '').toString().trim();
-            } catch {
-                // ignore
-            }
-        }
-        const finalBrand = (req.body.brand || brand || '').toString();
-        const rawFallbackBrandId = brandId != null ? String(brandId) : '';
-        const safeFallbackBrandId = rawFallbackBrandId && mongoose.Types.ObjectId.isValid(rawFallbackBrandId)
-            ? rawFallbackBrandId
-            : null;
-        const finalBrandId = req.body.brandId != null ? req.body.brandId : safeFallbackBrandId;
 
-        const newTask = new Task({
+        const obManagerEmail = requesterRole === 'ob_manager' ? assignedBy : null;
+
+        const task = new Task({
             title,
-            assignedTo: normalizedAssignedTo, // Email store ho jayegi
-            assignedBy: normalizedAssignedBy, // Email store ho jayegi
-            obManagerEmail,
-            dueDate: new Date(dueDate),
+            assignedTo,
+            assignedBy,
+            dueDate,
             priority,
-            taskType: effectiveTaskType,
-            companyName: finalCompanyName,
-            brand: finalBrand,
-            brandId: finalBrandId || null,
-            status
+            taskType,
+            companyName,
+            brand: brandName,
+            brandId: brandId || null,
+            obManagerEmail,
+            status: 'pending',
+            statusUpdatedAt: Date.now(),
+            completedApproval: false
         });
 
-        console.log(" New task object:", newTask);
-
-        // Save to database
-        const savedTask = await newTask.save();
-        console.log(" Task saved successfully:", savedTask._id);
-
-        try {
-            const actor = getActorFromRequest(req);
-            const historyEntry = await TaskHistory.create({
-                taskId: savedTask._id,
-                action: 'task_created',
-                message: `Task created by ${actor.name} (${actor.role})`,
-                oldStatus: null,
-                newStatus: savedTask.status || null,
-                note: '',
-                additionalData: {
-                    title: savedTask.title,
-                    assignedTo: savedTask.assignedTo,
-                    assignedBy: savedTask.assignedBy,
-                    dueDate: savedTask.dueDate ? new Date(savedTask.dueDate).toISOString() : null,
-                    priority: savedTask.priority,
-                    taskType: savedTask.taskType,
-                    companyName: savedTask.companyName,
-                    brand: savedTask.brand,
-                    brandId: savedTask.brandId ? savedTask.brandId.toString() : null
-                },
-                userId: actor.id,
-                user: {
-                    userId: actor.id,
-                    userName: actor.name,
-                    userEmail: actor.email,
-                    userRole: actor.role
-                }
-            });
-
-            await Task.findByIdAndUpdate(savedTask._id, {
-                $addToSet: { history: historyEntry._id }
-            });
-        } catch (historyError) {
-            console.error('Error creating task history:', historyError);
-        }
+        const savedTask = await task.save();
 
         await maybeAddBrandToAssignee({
-            assignedToEmail: savedTask.assignedTo,
-            brandId: savedTask.brandId
+            assignedToEmail: savedTask?.assignedTo,
+            brandId: savedTask?.brandId
         });
 
-        // Since assignedTo is now String/email, we can't use populate directly
-        // Manually fetch user details if needed
-        let assignedToUser = null;
-        let assignedByUser = null;
+        const [assignedToUser, assignedByUser] = await Promise.all([
+            User.findOne({ email: savedTask.assignedTo }).select('_id name email avatar role').lean(),
+            User.findOne({ email: savedTask.assignedBy }).select('_id name email avatar role').lean()
+        ]);
 
-        try {
-            assignedToUser = await User.findOne({ email: normalizedAssignedTo });
-            assignedByUser = await User.findOne({ email: normalizedAssignedBy });
-        } catch (userError) {
-            console.log("User lookup failed:", userError.message);
-        }
-
-        const canUseAssignerToken =
-            assignedByUser &&
-            assignedByUser.isGoogleCalendarConnected &&
-            assignedByUser.googleOAuth &&
-            assignedByUser.googleOAuth.refreshToken;
-
-        const canUseAssigneeToken =
-            assignedToUser &&
-            assignedToUser.isGoogleCalendarConnected &&
-            assignedToUser.googleOAuth &&
-            assignedToUser.googleOAuth.refreshToken;
-
-        const taskAttendees = [normalizedAssignedTo].filter(Boolean);
-
-        if (canUseAssignerToken) {
-            Promise.resolve()
-                .then(async () => {
-                    const googleTask = await createTaskCalendarInvite({
-                        refreshToken: assignedByUser.googleOAuth.refreshToken,
-                        task: savedTask,
-                        attendeeEmails: taskAttendees
-                    });
-
-                    const googleUpdatedAt = googleTask?.updated ? new Date(googleTask.updated) : null;
-                    await Task.findByIdAndUpdate(savedTask._id, {
-                        $set: {
-                            'googleSync.taskId': googleTask?.id || null,
-                            'googleSync.tasklistId': '@default',
-                            'googleSync.ownerEmail': normalizeEmail(assignedByUser?.email || normalizedAssignedBy),
-                            'googleSync.syncedAt': new Date(),
-                            'googleSync.googleUpdatedAt': (googleUpdatedAt && !Number.isNaN(googleUpdatedAt.getTime())) ? googleUpdatedAt : null,
-                            'googleSync.lastError': null
-                        }
-                    });
-
-                    console.log('Google Task created (assigner):', {
-                        taskId: savedTask?._id?.toString?.() || savedTask?._id,
-                        googleTaskId: googleTask?.id
-                    });
-                })
-                .catch((error) => {
-                    console.error('Google Task creation failed (assigner):', error?.message || error);
-                    Task.findByIdAndUpdate(savedTask._id, {
-                        $set: {
-                            'googleSync.lastError': error?.message || 'Google Task creation failed',
-                            'googleSync.syncedAt': new Date(),
-                            'googleSync.ownerEmail': normalizeEmail(assignedByUser?.email || normalizedAssignedBy)
-                        }
-                    }).catch(() => undefined);
-                });
-        } else if (canUseAssigneeToken) {
-            Promise.resolve()
-                .then(async () => {
-                    const googleTask = await createTaskCalendarInvite({
-                        refreshToken: assignedToUser.googleOAuth.refreshToken,
-                        task: savedTask,
-                        attendeeEmails: taskAttendees
-                    });
-
-                    const googleUpdatedAt = googleTask?.updated ? new Date(googleTask.updated) : null;
-                    await Task.findByIdAndUpdate(savedTask._id, {
-                        $set: {
-                            'googleSync.taskId': googleTask?.id || null,
-                            'googleSync.tasklistId': '@default',
-                            'googleSync.ownerEmail': normalizeEmail(assignedToUser?.email || normalizedAssignedTo),
-                            'googleSync.syncedAt': new Date(),
-                            'googleSync.googleUpdatedAt': (googleUpdatedAt && !Number.isNaN(googleUpdatedAt.getTime())) ? googleUpdatedAt : null,
-                            'googleSync.lastError': null
-                        }
-                    });
-
-                    console.log('Google Task created (assignee):', {
-                        taskId: savedTask?._id?.toString?.() || savedTask?._id,
-                        googleTaskId: googleTask?.id
-                    });
-                })
-                .catch((error) => {
-                    console.error('Google Task creation failed (assignee):', error?.message || error);
-                    Task.findByIdAndUpdate(savedTask._id, {
-                        $set: {
-                            'googleSync.lastError': error?.message || 'Google Task creation failed',
-                            'googleSync.syncedAt': new Date(),
-                            'googleSync.ownerEmail': normalizeEmail(assignedToUser?.email || normalizedAssignedTo)
-                        }
-                    }).catch(() => undefined);
-                });
-        }
-
-        // Prepare response with user details
         const resolvedBrandName = await resolveBrandNameForTask(savedTask);
         const responseData = {
             ...savedTask.toObject(),
+            id: savedTask._id,
             brand: resolvedBrandName || (savedTask.brand || ''),
             assignedToUser: assignedToUser ? {
                 id: assignedToUser._id,
                 name: assignedToUser.name,
                 email: assignedToUser.email,
+                avatar: assignedToUser.avatar,
                 role: assignedToUser.role,
-            } : { email: assignedTo },
+            } : { email: savedTask.assignedTo },
             assignedByUser: assignedByUser ? {
                 id: assignedByUser._id,
                 name: assignedByUser.name,
                 email: assignedByUser.email,
+                avatar: assignedByUser.avatar,
                 role: assignedByUser.role,
-            } : { email: assignedBy }
+            } : { email: savedTask.assignedBy }
         };
+
+        try {
+            emitTaskUpserted(responseData);
+        } catch (emitError) {
+            console.error('emitTaskUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
 
         Promise.resolve()
             .then(async () => {
                 const toName = assignedToUser?.name || 'User';
                 const assignedByName = assignedByUser?.name || req.user?.name || 'User';
-                const assignedByEmailSafe = normalizeEmail(req.user?.email || assignedByUser?.email || savedTask.assignedBy);
 
                 await sendTaskAssignedEmail({
                     toEmail: savedTask.assignedTo,
                     toName,
                     assignedByName,
-                    assignedByEmail: assignedByEmailSafe,
+                    assignedByEmail: assignedBy,
                     task: {
                         title: savedTask.title,
                         priority: savedTask.priority,
@@ -756,7 +338,7 @@ exports.addTask = async (req, res) => {
             data: responseData
         });
     } catch (error) {
-        console.error(' Error creating task:', error);
+        console.error('Error creating task:', error);
         return res.status(500).json({
             success: false,
             message: 'Error creating task',
@@ -770,12 +352,16 @@ exports.getAllTasks = async (req, res) => {
         const requesterRole = roleOf(req.user);
         const requesterEmail = normalizeEmail(req.user?.email);
 
+        console.log('getAllTasks called by:', { requesterRole, requesterEmail });
+
         let tasks;
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
             tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
+            console.log('Admin fetching all tasks, count:', tasks.length);
         } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
             const scope = await resolveTaskScopeEmails(req.user);
             const scopeEmails = Array.from(scope);
+            console.log('Scope emails for role', requesterRole, ':', scopeEmails);
             if (scopeEmails.length === 0) {
                 tasks = [];
             } else {
@@ -787,6 +373,7 @@ exports.getAllTasks = async (req, res) => {
                     ]
                 }).sort({ createdAt: -1 }).lean();
             }
+            console.log('Tasks for scope, count:', tasks.length);
         } else if (requesterRole === 'ob_manager') {
             const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
             let requesterCompany = (req.user?.companyName || '').toString().trim();
@@ -826,6 +413,7 @@ exports.getAllTasks = async (req, res) => {
                     $or: or
                 }).sort({ createdAt: -1 }).lean();
             }
+            console.log('OB Manager tasks, count:', tasks.length);
         } else if (requesterRole === 'manager') {
             const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
             const mdEmails = (mdManagers || [])
@@ -839,6 +427,7 @@ exports.getAllTasks = async (req, res) => {
                     { assignedTo: requesterEmail, assignedBy: { $in: mdEmails } }
                 ]
             }).sort({ createdAt: -1 }).lean();
+            console.log('Manager tasks, count:', tasks.length);
         } else {
             tasks = await Task.find({
                 isDeleted: { $ne: true },
@@ -847,6 +436,7 @@ exports.getAllTasks = async (req, res) => {
                     { assignedBy: requesterEmail }
                 ]
             }).sort({ createdAt: -1 }).lean();
+            console.log('Default tasks for', requesterEmail, ', count:', tasks.length);
         }
 
         const emails = Array.from(
@@ -1766,6 +1356,15 @@ exports.updateTask = async (req, res) => {
                 role: assignedByUser.role,
             } : { email: updatedTask.assignedBy }
         };
+
+        try {
+            emitTaskUpserted({
+                ...responseData,
+                id: responseData.id || responseData._id || updatedTask._id,
+            });
+        } catch (emitError) {
+            console.error('emitTaskUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+        }
 
         return res.json({
             success: true,
