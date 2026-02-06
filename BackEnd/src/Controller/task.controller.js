@@ -125,7 +125,7 @@ async function userCanAccessTask(task, user) {
 
     if (requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) return true;
 
-    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
         const scope = await resolveTaskScopeEmails(user);
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
     }
@@ -358,7 +358,16 @@ exports.getAllTasks = async (req, res) => {
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
             tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
             console.log('Admin fetching all tasks, count:', tasks.length);
-        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+        } else if (requesterRole === 'am') {
+            tasks = await Task.find({
+                isDeleted: { $ne: true },
+                $or: [
+                    { assignedTo: requesterEmail },
+                    { assignedBy: requesterEmail }
+                ]
+            }).sort({ createdAt: -1 }).lean();
+            console.log('AM tasks, count:', tasks.length);
+        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
             const scope = await resolveTaskScopeEmails(req.user);
             const scopeEmails = Array.from(scope);
             console.log('Scope emails for role', requesterRole, ':', scopeEmails);

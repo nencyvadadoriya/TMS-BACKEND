@@ -60,7 +60,8 @@ const withAssignedBrandIds = async (user) => {
     const assignedBrandIds = new Set();
     let managerId = null;
     let currentId = id;
-    for (let depth = 0; depth < 8; depth++) {
+    const maxDepth = role === 'rm' || role === 'am' ? 1 : 8;
+    for (let depth = 0; depth < maxDepth; depth++) {
       const dbUser = await User.findById(currentId).select('assignedBrandIds managerId').lean();
       if (!dbUser) break;
 
@@ -733,7 +734,9 @@ exports.getBrands = async (req, res) => {
       mongoose.Types.ObjectId.isValid(requesterId) &&
       role !== 'admin' &&
       role !== 'super_admin' &&
-      role !== 'md_manager'
+      role !== 'md_manager' &&
+      role !== 'rm' &&
+      role !== 'am'
     ) {
       try {
         const assignPerm = await getEffectivePermissionForUser(requesterId, 'assign_page');
