@@ -1015,6 +1015,12 @@ exports.updateTask = async (req, res) => {
         if (otherUpdateKeys.length > 0) {
             const isObManager = requesterRole === 'ob_manager';
 
+            const canEditTaskDetails = Boolean(
+                isAdmin
+                || isAssigner
+                || ((requesterRole === 'rm' || requesterRole === 'am') && (await userCanAccessTask(previousTask, req.user)))
+            );
+
             const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
             const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
 
@@ -1065,7 +1071,7 @@ exports.updateTask = async (req, res) => {
                     }
                 }
             } else {
-                if (!isAssigner) {
+                if (!canEditTaskDetails) {
                     return res.status(403).json({
                         success: false,
                         message: 'You are not authorized to update this task'
