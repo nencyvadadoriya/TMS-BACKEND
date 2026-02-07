@@ -114,6 +114,44 @@ async function resolveTaskScopeEmails(user) {
     return scope;
 }
 
+async function resolveRmEmailForAmUser(user) {
+    const requesterEmail = normalizeEmail(user?.email);
+    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+
+    let managerId = safeObjectIdString(user?.managerId);
+    if (!managerId) {
+        try {
+            const amDoc = requesterId && mongoose.Types.ObjectId.isValid(requesterId)
+                ? await User.findById(requesterId).select('managerId').lean()
+                : requesterEmail
+                    ? await User.findOne({ email: requesterEmail }).select('managerId').lean()
+                    : null;
+            managerId = safeObjectIdString(amDoc?.managerId);
+        } catch {
+            managerId = '';
+        }
+    }
+
+    const visited = new Set();
+    let currentId = managerId;
+    let depth = 0;
+    while (currentId && mongoose.Types.ObjectId.isValid(currentId) && depth < 6) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const manager = await User.findById(currentId).select('email role managerId').lean();
+        const managerRole = roleOf(manager);
+        const managerEmail = normalizeEmail(manager?.email);
+
+        if (managerRole === 'rm' && managerEmail) return managerEmail;
+
+        currentId = safeObjectIdString(manager?.managerId);
+        depth += 1;
+    }
+
+    return '';
+}
+
 async function userCanAccessTask(task, user) {
     const requesterRole = roleOf(user);
     const requesterEmail = normalizeEmail(user?.email);
@@ -128,6 +166,12 @@ async function userCanAccessTask(task, user) {
     if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
         const scope = await resolveTaskScopeEmails(user);
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
+    }
+
+    if (requesterRole === 'am') {
+        const rmEmail = await resolveRmEmailForAmUser(user);
+        if (rmEmail && (assignedToEmail === rmEmail || assignedByEmail === rmEmail)) return true;
+        return false;
     }
 
     if (requesterRole === 'ob_manager') {
@@ -359,11 +403,13 @@ exports.getAllTasks = async (req, res) => {
             tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
             console.log('Admin fetching all tasks, count:', tasks.length);
         } else if (requesterRole === 'am') {
+            const rmEmail = await resolveRmEmailForAmUser(req.user);
+            const sharedEmails = Array.from(new Set([requesterEmail, rmEmail].filter(Boolean)));
             tasks = await Task.find({
                 isDeleted: { $ne: true },
                 $or: [
-                    { assignedTo: requesterEmail },
-                    { assignedBy: requesterEmail }
+                    { assignedTo: { $in: sharedEmails } },
+                    { assignedBy: { $in: sharedEmails } }
                 ]
             }).sort({ createdAt: -1 }).lean();
             console.log('AM tasks, count:', tasks.length);
