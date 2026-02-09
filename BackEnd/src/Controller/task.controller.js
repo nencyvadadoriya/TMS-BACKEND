@@ -188,7 +188,7 @@ function userIsTaskAssigner(task, user) {
 
 function canViewTaskReviews(user) {
     const r = roleOf(user);
-    return r === 'admin' || r === 'super_admin' || r === 'ob_manager';
+    return r === 'admin' || r === 'super_admin' || r === 'ob_manager' || r === 'manager' || r === 'md_manager';
 }
 
 function canSubmitTaskReview(user) {
@@ -414,20 +414,33 @@ exports.getAllTasks = async (req, res) => {
                 }).sort({ createdAt: -1 }).lean();
             }
             console.log('OB Manager tasks, count:', tasks.length);
-        } else if (requesterRole === 'manager') {
-            const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
-            const mdEmails = (mdManagers || [])
-                .map((u) => normalizeEmail(u?.email))
-                .filter(Boolean);
+        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
 
-            tasks = await Task.find({
-                isDeleted: { $ne: true },
-                $or: [
-                    { assignedBy: requesterEmail },
-                    { assignedTo: requesterEmail, assignedBy: { $in: mdEmails } }
-                ]
-            }).sort({ createdAt: -1 }).lean();
-            console.log('Manager tasks, count:', tasks.length);
+            const directReportEmails = (requesterId && mongoose.Types.ObjectId.isValid(requesterId))
+                ? (await User.find({ managerId: requesterId, isDeleted: { $ne: true } }).select('email').lean())
+                    .map((u) => normalizeEmail(u?.email))
+                    .filter(Boolean)
+                : [];
+
+            const scopeEmails = Array.from(new Set([
+                requesterEmail,
+                ...directReportEmails
+            ].filter(Boolean)));
+
+            if (scopeEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    isDeleted: { $ne: true },
+                    $or: [
+                        { assignedBy: { $in: scopeEmails } },
+                        { assignedTo: { $in: scopeEmails } }
+                    ]
+                }).sort({ createdAt: -1 }).lean();
+            }
+
+            console.log(`${requesterRole} tasks, count:`, tasks.length);
         } else {
             tasks = await Task.find({
                 isDeleted: { $ne: true },
@@ -1430,6 +1443,30 @@ exports.getTaskReviews = async (req, res) => {
                 tasks = await Task.find({
                     ...query,
                     assignedTo: { $in: assistantEmails }
+                }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+            }
+        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            const directReportEmails = (requesterId && mongoose.Types.ObjectId.isValid(requesterId))
+                ? (await User.find({ managerId: requesterId, isDeleted: { $ne: true } }).select('email').lean())
+                    .map((u) => normalizeEmail(u?.email))
+                    .filter(Boolean)
+                : [];
+
+            const scopeEmails = Array.from(new Set([
+                requesterEmail,
+                ...directReportEmails
+            ].filter(Boolean)));
+
+            if (scopeEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    ...query,
+                    $or: [
+                        { assignedBy: { $in: scopeEmails } },
+                        { assignedTo: { $in: scopeEmails } }
+                    ]
                 }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
             }
         } else {
