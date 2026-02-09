@@ -1,14 +1,55 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+let sendgridTransport;
+try {
+    sendgridTransport = require('nodemailer-sendgrid-transport');
+} catch (e) {
+    sendgridTransport = null;
+}
+
 console.log('🔧 Email Configuration Check:');
 console.log('USER_EMAIL:', process.env.USER_EMAIL || '❌ Missing');
 console.log('USER_PASS_KEY:', process.env.USER_PASS_KEY ? '✅ Set (length: ' + process.env.USER_PASS_KEY.length + ')' : '❌ Missing');
+console.log('SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? '✅ Set (length: ' + process.env.SENDGRID_API_KEY.length + ')' : '❌ Missing');
+console.log('EMAIL_FROM:', process.env.EMAIL_FROM || '❌ Missing');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'development');
 
 // Create transporter with detailed error handling
 const createTransporter = () => {
     try {
+        const usingSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+
+        if (usingSendGrid) {
+            if (!sendgridTransport) {
+                console.error('❌ SENDGRID_API_KEY is set but nodemailer-sendgrid-transport is not installed');
+                console.error('Install it with: npm i nodemailer-sendgrid-transport');
+                return null;
+            }
+
+            const transporter = nodemailer.createTransport(
+                sendgridTransport({
+                    auth: {
+                        api_key: process.env.SENDGRID_API_KEY
+                    }
+                })
+            );
+
+            transporter.verify((error) => {
+                if (error) {
+                    console.error('❌ SendGrid transporter verification failed:', {
+                        message: error.message,
+                        code: error.code,
+                        command: error.command
+                    });
+                } else {
+                    console.log('✅ SendGrid email transport is ready');
+                }
+            });
+
+            return transporter;
+        }
+
         const transporter = nodemailer.createTransport({
             service: 'gmail',
             host: 'smtp.gmail.com',
@@ -65,13 +106,26 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
             return false;
         }
 
-        // Check if credentials exist
-        if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-            console.error('❌ Email credentials not found in environment');
-            console.log('Please check Render.com environment variables:');
-            console.log('- USER_EMAIL should be:', process.env.USER_EMAIL);
-            console.log('- USER_PASS_KEY should be 16-character App Password');
-            return false;
+        const fromAddress = process.env.EMAIL_FROM || process.env.USER_EMAIL;
+        const usingSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+
+        if (usingSendGrid) {
+            if (!process.env.SENDGRID_API_KEY) {
+                console.error('❌ SENDGRID_API_KEY not found in environment');
+                return false;
+            }
+            if (!fromAddress) {
+                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
+                return false;
+            }
+        } else {
+            if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
+                console.error('❌ Email credentials not found in environment');
+                console.log('Please check environment variables:');
+                console.log('- USER_EMAIL should be a Gmail address');
+                console.log('- USER_PASS_KEY should be 16-character App Password');
+                return false;
+            }
         }
 
         // Check transporter
@@ -87,7 +141,7 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
         const mailOptions = {
             from: {
                 name: 'Task Management System',
-                address: process.env.USER_EMAIL
+                address: fromAddress
             },
             to: email,
             subject: 'Password Reset OTP - Task Management System',
@@ -226,9 +280,27 @@ exports.sendAccountCreatedEmail = async ({
             return false;
         }
 
-        if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-            console.error('❌ Email credentials not found in environment');
-            return false;
+        const fromAddress = process.env.EMAIL_FROM || process.env.USER_EMAIL;
+        const usingSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+
+        if (usingSendGrid) {
+            if (!process.env.SENDGRID_API_KEY) {
+                console.error('❌ SENDGRID_API_KEY not found in environment');
+                return false;
+            }
+            if (!fromAddress) {
+                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
+                return false;
+            }
+        } else {
+            if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
+                console.error('❌ Email credentials not found in environment');
+                return false;
+            }
+        }
+
+        if (!transporter) {
+            transporter = createTransporter();
         }
 
         if (!transporter) {
@@ -251,7 +323,7 @@ exports.sendAccountCreatedEmail = async ({
         const mailOptions = {
             from: {
                 name: fromDisplayName,
-                address: process.env.USER_EMAIL
+                address: fromAddress
             },
             replyTo: createdByEmail || undefined,
             to: safeTo,
@@ -380,9 +452,27 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
             return false;
         }
 
-        if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-            console.error('❌ Email credentials not found in environment');
-            return false;
+        const fromAddress = process.env.EMAIL_FROM || process.env.USER_EMAIL;
+        const usingSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+
+        if (usingSendGrid) {
+            if (!process.env.SENDGRID_API_KEY) {
+                console.error('❌ SENDGRID_API_KEY not found in environment');
+                return false;
+            }
+            if (!fromAddress) {
+                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
+                return false;
+            }
+        } else {
+            if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
+                console.error('❌ Email credentials not found in environment');
+                return false;
+            }
+        }
+
+        if (!transporter) {
+            transporter = createTransporter();
         }
 
         if (!transporter) {
@@ -411,7 +501,7 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
         const mailOptions = {
             from: {
                 name: 'Task Management System',
-                address: process.env.USER_EMAIL
+                address: fromAddress
             },
             replyTo: assignedByEmail || undefined,
             to: safeTo,
