@@ -13,7 +13,13 @@ module.exports = (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
         
         // Add user to request
-        req.user = decoded;
+        const normalized = decoded && typeof decoded === 'object' ? { ...decoded } : decoded;
+        if (normalized && typeof normalized === 'object') {
+            if (normalized.id != null) normalized.id = String(normalized.id);
+            if (normalized._id != null) normalized._id = String(normalized._id);
+            if (normalized.userId != null) normalized.userId = String(normalized.userId);
+        }
+        req.user = normalized;
         
         next();
     } catch (error) {

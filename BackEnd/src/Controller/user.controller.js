@@ -420,6 +420,8 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
         if (targetRole === 'admin') return false;
 
+        return true;
+
     }
 
 
@@ -469,6 +471,13 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
         if (targetRole !== 'assistant' && targetRole !== 'sub_assistance') return false;
 
     }
+
+    const requesterDoc = (reqRole === 'sbm' || reqRole === 'rm' || reqRole === 'manager' || reqRole === 'md_manager' || reqRole === 'ob_manager')
+        ? await User.findById(reqId).select('email').lean().catch(() => null)
+        : null;
+    const requesterEmail = (requesterDoc?.email || '').toString().trim().toLowerCase();
+    const targetCreatedBy = (targetUser?.createdByEmail || '').toString().trim().toLowerCase();
+    if (requesterEmail && targetCreatedBy && requesterEmail === targetCreatedBy) return true;
 
 
 
@@ -628,7 +637,7 @@ exports.registerUser = async (req, res) => {
 
         const userPayload = {
 
-            id: newUser._id,
+            id: String(newUser._id || ''),
 
             name: newUser.name,
 
@@ -756,7 +765,7 @@ exports.loginUser = async (req, res) => {
 
             {
 
-                id: user._id,
+                id: String(user._id || ''),
 
                 email: user.email,
 
@@ -2124,7 +2133,7 @@ exports.updateUser = async (req, res) => {
 
         const { id } = req.params;
 
-        const target = await User.findById(id).select('role managerId').lean();
+        const target = await User.findById(id).select('_id role managerId createdByEmail').lean();
 
         const allowed = await canManageUserByChain({ requesterRole, requesterId, targetUser: target });
 
@@ -2353,7 +2362,7 @@ exports.deleteUser = async (req, res) => {
 
 
 
-        const userToDelete = await User.findById(id).select('email role managerId companyName').lean();
+        const userToDelete = await User.findById(id).select('_id email role managerId companyName createdByEmail').lean();
 
 
 

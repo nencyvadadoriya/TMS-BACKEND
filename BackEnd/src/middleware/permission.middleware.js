@@ -41,7 +41,7 @@ const ensureDefaultModules = async () => {
         { moduleId: 'calendar_page', name: 'Calendar', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'reviews_page', name: 'Reviews', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'other_work_page', name: 'Other Work', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'user_management', name: 'User Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'user_management', name: 'User Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', sbm: 'allow', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'brands_page', name: 'Brands', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'company_brand_task_type', name: 'Company Brand Task Type', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'company_task_type', name: 'Company Task Type', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
@@ -58,7 +58,7 @@ const ensureDefaultModules = async () => {
         { moduleId: 'create_task', name: 'Create Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'assign_task', name: 'Assign Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
-        { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'team', manager: 'own', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'team', manager: 'own', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
@@ -93,6 +93,11 @@ const ensureDefaultModules = async () => {
             if (!existingMod || existingMod.isDeleted === true) continue;
 
             const existingDefaults = existingMod.defaults;
+            const getDefaultValue = (key) => {
+                if (!existingDefaults) return undefined;
+                if (typeof existingDefaults.get === 'function') return existingDefaults.get(key);
+                return existingDefaults[key];
+            };
             const hasSuperAdmin = existingDefaults && (typeof existingDefaults.get === 'function'
                 ? typeof existingDefaults.get('super_admin') !== 'undefined'
                 : typeof existingDefaults?.super_admin !== 'undefined');
@@ -128,6 +133,18 @@ const ensureDefaultModules = async () => {
             if (!hasRm && row.defaults?.rm) setPayload['defaults.rm'] = row.defaults.rm;
             if (!hasAm && row.defaults?.am) setPayload['defaults.am'] = row.defaults.am;
             if (!hasAr && row.defaults?.ar) setPayload['defaults.ar'] = row.defaults.ar;
+
+            if (String(row.moduleId) === 'edit_any_task') {
+                const existingRm = String(getDefaultValue('rm') || '').toLowerCase();
+                const existingAm = String(getDefaultValue('am') || '').toLowerCase();
+                if (!existingRm || existingRm === 'deny') setPayload['defaults.rm'] = 'allow';
+                if (!existingAm || existingAm === 'deny') setPayload['defaults.am'] = 'allow';
+            }
+
+            if (String(row.moduleId) === 'user_management') {
+                const existingSbm = String(getDefaultValue('sbm') || '').toLowerCase();
+                if (!existingSbm || existingSbm === 'deny') setPayload['defaults.sbm'] = 'allow';
+            }
             if (Object.keys(setPayload).length === 0) continue;
 
             updateOps.push({

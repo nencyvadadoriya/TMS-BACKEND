@@ -114,6 +114,44 @@ async function resolveTaskScopeEmails(user) {
     return scope;
 }
 
+async function resolveRmEmailForAmUser(user) {
+    const requesterEmail = normalizeEmail(user?.email);
+    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+
+    let managerId = safeObjectIdString(user?.managerId);
+    if (!managerId) {
+        try {
+            const amDoc = requesterId && mongoose.Types.ObjectId.isValid(requesterId)
+                ? await User.findById(requesterId).select('managerId').lean()
+                : requesterEmail
+                    ? await User.findOne({ email: requesterEmail }).select('managerId').lean()
+                    : null;
+            managerId = safeObjectIdString(amDoc?.managerId);
+        } catch {
+            managerId = '';
+        }
+    }
+
+    const visited = new Set();
+    let currentId = managerId;
+    let depth = 0;
+    while (currentId && mongoose.Types.ObjectId.isValid(currentId) && depth < 6) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const manager = await User.findById(currentId).select('email role managerId').lean();
+        const managerRole = roleOf(manager);
+        const managerEmail = normalizeEmail(manager?.email);
+
+        if (managerRole === 'rm' && managerEmail) return managerEmail;
+
+        currentId = safeObjectIdString(manager?.managerId);
+        depth += 1;
+    }
+
+    return '';
+}
+
 async function userCanAccessTask(task, user) {
     const requesterRole = roleOf(user);
     const requesterEmail = normalizeEmail(user?.email);
@@ -125,9 +163,15 @@ async function userCanAccessTask(task, user) {
 
     if (requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) return true;
 
-    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
         const scope = await resolveTaskScopeEmails(user);
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
+    }
+
+    if (requesterRole === 'am') {
+        const rmEmail = await resolveRmEmailForAmUser(user);
+        if (rmEmail && (assignedToEmail === rmEmail || assignedByEmail === rmEmail)) return true;
+        return false;
     }
 
     if (requesterRole === 'ob_manager') {
@@ -358,7 +402,18 @@ exports.getAllTasks = async (req, res) => {
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
             tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
             console.log('Admin fetching all tasks, count:', tasks.length);
-        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'am' || requesterRole === 'ar') {
+        } else if (requesterRole === 'am') {
+            const rmEmail = await resolveRmEmailForAmUser(req.user);
+            const sharedEmails = Array.from(new Set([requesterEmail, rmEmail].filter(Boolean)));
+            tasks = await Task.find({
+                isDeleted: { $ne: true },
+                $or: [
+                    { assignedTo: { $in: sharedEmails } },
+                    { assignedBy: { $in: sharedEmails } }
+                ]
+            }).sort({ createdAt: -1 }).lean();
+            console.log('AM tasks, count:', tasks.length);
+        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
             const scope = await resolveTaskScopeEmails(req.user);
             const scopeEmails = Array.from(scope);
             console.log('Scope emails for role', requesterRole, ':', scopeEmails);
@@ -1019,6 +1074,12 @@ exports.updateTask = async (req, res) => {
         if (otherUpdateKeys.length > 0) {
             const isObManager = requesterRole === 'ob_manager';
 
+            const canEditTaskDetails = Boolean(
+                isAdmin
+                || isAssigner
+                || ((requesterRole === 'rm' || requesterRole === 'am') && (await userCanAccessTask(previousTask, req.user)))
+            );
+
             const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
             const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
 
@@ -1069,7 +1130,7 @@ exports.updateTask = async (req, res) => {
                     }
                 }
             } else {
-                if (!isAssigner) {
+                if (!canEditTaskDetails) {
                     return res.status(403).json({
                         success: false,
                         message: 'You are not authorized to update this task'
