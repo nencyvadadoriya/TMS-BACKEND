@@ -81,10 +81,19 @@ async function maybeAddBrandToAssignee({ assignedToEmail, brandId }) {
 
 async function resolveTaskScopeEmails(user) {
     const scope = new Set();
-    const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
     const requesterEmail = normalizeEmail(user?.email);
 
     if (requesterEmail) scope.add(requesterEmail);
+
+    let requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
+    if ((!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) && requesterEmail) {
+        try {
+            const doc = await User.findOne({ email: requesterEmail }).select('_id').lean();
+            requesterId = safeObjectIdString(doc?._id);
+        } catch {
+            requesterId = '';
+        }
+    }
 
     if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) {
         return scope;
@@ -172,6 +181,7 @@ async function userCanAccessTask(task, user) {
     if (requesterRole === 'am') {
         const rmEmail = await resolveRmEmailForAmUser(user);
         if (rmEmail && (assignedToEmail === rmEmail || assignedByEmail === rmEmail)) return true;
+
         return false;
     }
 
@@ -205,13 +215,13 @@ async function userCanAccessTask(task, user) {
         return false;
     }
 
-    if (requesterRole === 'manager') {
-        const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
-        const mdEmails = new Set((mdManagers || []).map((u) => normalizeEmail(u?.email)).filter(Boolean));
-        return requesterEmail && (
-            assignedByEmail === requesterEmail
-            || (assignedToEmail === requesterEmail && mdEmails.has(assignedByEmail))
-        );
+    if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+        const scope = await resolveTaskScopeEmails(user);
+        return scope.has(assignedToEmail) || scope.has(assignedByEmail);
+    }
+
+    if (isAssistantRoleKey(requesterRole)) {
+        return requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail);
     }
 
     return false;
@@ -233,7 +243,12 @@ function userIsTaskAssigner(task, user) {
 
 function canViewTaskReviews(user) {
     const r = roleOf(user);
-    return r === 'admin' || r === 'super_admin' || r === 'ob_manager';
+    return r === 'admin'
+        || r === 'super_admin'
+        || r === 'ob_manager'
+        || r === 'manager'
+        || r === 'md_manager'
+        || isAssistantRoleKey(r);
 }
 
 function canSubmitTaskReview(user) {
@@ -470,20 +485,24 @@ exports.getAllTasks = async (req, res) => {
                 }).sort({ createdAt: -1 }).lean();
             }
             console.log('OB Manager tasks, count:', tasks.length);
-        } else if (requesterRole === 'manager') {
-            const mdManagers = await User.find({ role: { $in: ['md_manager', 'md manager', 'md-manager'] } }).select('email').lean();
-            const mdEmails = (mdManagers || [])
-                .map((u) => normalizeEmail(u?.email))
-                .filter(Boolean);
+        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(scope);
+            console.log('Scope emails for role', requesterRole, ':', scopeEmails);
 
-            tasks = await Task.find({
-                isDeleted: { $ne: true },
-                $or: [
-                    { assignedBy: requesterEmail },
-                    { assignedTo: requesterEmail, assignedBy: { $in: mdEmails } }
-                ]
-            }).sort({ createdAt: -1 }).lean();
-            console.log('Manager tasks, count:', tasks.length);
+            if (scopeEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    isDeleted: { $ne: true },
+                    $or: [
+                        { assignedTo: { $in: scopeEmails } },
+                        { assignedBy: { $in: scopeEmails } }
+                    ]
+                }).sort({ createdAt: -1 }).lean();
+            }
+
+            console.log(`${requesterRole} tasks, count:`, tasks.length);
         } else {
             tasks = await Task.find({
                 isDeleted: { $ne: true },
@@ -1481,7 +1500,7 @@ exports.getTaskReviews = async (req, res) => {
             const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
-            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'manager', 'ob_manager'];
             const assistantDocs = companySafe
                 ? await User.find({
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
@@ -1500,6 +1519,66 @@ exports.getTaskReviews = async (req, res) => {
                 tasks = await Task.find({
                     ...query,
                     assignedTo: { $in: assistantEmails }
+                }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+            }
+        } else if (isAssistantRoleKey(requesterRole)) {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+
+            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $in: assistantRoles },
+                    isDeleted: { $ne: true },
+                }).select('email').lean()
+                : [];
+
+            const assistantEmails = (assistantDocs || [])
+                .map((u) => normalizeEmail(u?.email))
+                .filter(Boolean);
+
+            const mergedEmails = Array.from(new Set([...(assistantEmails || []), requesterEmail].filter(Boolean)));
+            if (mergedEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    ...query,
+                    assignedTo: { $in: mergedEmails }
+                }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
+            }
+        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(scope);
+
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantDocs = await User.find({
+                role: { $in: assistantRoles },
+                isDeleted: { $ne: true },
+            }).select('email').lean();
+            const assistantEmails = (assistantDocs || [])
+                .map((u) => normalizeEmail(u?.email))
+                .filter(Boolean);
+
+            const mergedEmails = Array.from(new Set([...(scopeEmails || []), ...(assistantEmails || [])].filter(Boolean)));
+            console.log('Scope emails for role', requesterRole, ':', mergedEmails);
+
+            if (mergedEmails.length === 0) {
+                tasks = [];
+            } else {
+                tasks = await Task.find({
+                    ...query,
+                    $or: [
+                        { assignedTo: { $in: mergedEmails } },
+                        { assignedBy: { $in: mergedEmails } }
+                    ]
                 }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 }).lean();
             }
         } else {
