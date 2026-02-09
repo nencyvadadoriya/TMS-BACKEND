@@ -456,11 +456,11 @@ exports.getAllTasks = async (req, res) => {
             const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
-            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const teamRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'manager'];
             const assistantDocs = companySafe
                 ? await User.find({
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-                    role: { $in: assistantRoles }
+                    role: { $in: teamRoles }
                 }).select('email').lean()
                 : [];
 
@@ -487,7 +487,30 @@ exports.getAllTasks = async (req, res) => {
             console.log('OB Manager tasks, count:', tasks.length);
         } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
             const scope = await resolveTaskScopeEmails(req.user);
-            const scopeEmails = Array.from(scope);
+
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+
+            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+            const teamRoles = ['manager', 'assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const teamDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $in: teamRoles }
+                }).select('email').lean()
+                : [];
+
+            const teamEmails = (teamDocs || [])
+                .map((u) => normalizeEmail(u?.email))
+                .filter(Boolean);
+
+            const scopeEmails = Array.from(new Set([...Array.from(scope), ...teamEmails].filter(Boolean)));
             console.log('Scope emails for role', requesterRole, ':', scopeEmails);
 
             if (scopeEmails.length === 0) {
@@ -984,7 +1007,12 @@ exports.inviteToTask = async (req, res) => {
         return res.json({ success: true, message: 'User invited successfully', data: task });
     } catch (error) {
         console.error('Error inviting to task:', error);
-        return res.status(500).json({ success: false, message: 'Failed to invite user', error: error.message });
+
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to invite user',
+            error: error.message
+        });
     }
 };
 
@@ -1051,6 +1079,19 @@ exports.updateTask = async (req, res) => {
         const isAssigner = userIsTaskAssigner(previousTask, req.user);
         const isAssignee = requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail;
 
+        const normalizeCompanyKey = (value) => normalizeText(value).toLowerCase().replace(/\s+/g, '');
+        const SPEED_E_COM_COMPANY_KEY = 'speedecom';
+        const taskCompanyKey = normalizeCompanyKey(previousTask.companyName || previousTask.company);
+        const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
+
+        const hasDueDateKey = Object.prototype.hasOwnProperty.call(updates || {}, 'dueDate');
+        if (hasDueDateKey && isSpeedEcomTask && !isAssignee) {
+            return res.status(403).json({
+                success: false,
+                message: 'Only the assignee can update due date for Speed E Com tasks'
+            });
+        }
+
         const KEYURI_EMAIL = normalizeEmail('keyurismartbiz@gmail.com');
         const RUTU_EMAIL = normalizeEmail('rutusmartbiz@gmail.com');
 
@@ -1079,6 +1120,13 @@ exports.updateTask = async (req, res) => {
         const statusOnlyAllowedKeys = new Set(['status', 'completedApproval', 'statusUpdatedAt']);
         const updateKeys = Object.keys(updates || {});
         const otherUpdateKeys = updateKeys.filter((k) => !statusOnlyAllowedKeys.has(k));
+
+        if (Boolean(previousTask.completedApproval) && otherUpdateKeys.length > 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'This task has been permanently approved and cannot be edited'
+            });
+        }
 
         // Permissions:
         // - Assignee can update status (complete/pending)
