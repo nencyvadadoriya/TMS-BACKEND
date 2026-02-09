@@ -14,6 +14,7 @@ const {
     recordStatusChange,
     recordApprovalChange,
     recordTaskUpdate,
+    recordTaskReassigned,
     recordTaskDeleted
 } = require('../utils/taskAudit.util');
 
@@ -1042,6 +1043,12 @@ exports.updateTask = async (req, res) => {
         const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
         const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
 
+        // If assignee changes (reassignment) and client didn't explicitly request a status change,
+        // mark task as reassigned so it is visible in UI and history.
+        if (isReassignment && !hasStatusKey) {
+            updates.status = 'reassigned';
+        }
+
         // If assignee moves task back to pending, force-clear approval on the server.
         // (This should not block assignee.)
         const desiredStatus = hasStatusKey ? String(updates.status || '').toLowerCase() : '';
@@ -1285,7 +1292,9 @@ exports.updateTask = async (req, res) => {
                 // - If status changed (even if approval got cleared as part of pending transition), record only status.
                 // - Else record approval changes.
                 // - Else record field updates.
-                if (statusChangedForAudit) {
+                if (isReassignment) {
+                    await recordTaskReassigned({ req, previousTask, updatedTask, changes, note });
+                } else if (statusChangedForAudit) {
                     await recordStatusChange({ req, previousTask, updatedTask, note, requestRecheck });
                 } else if (approvalChanged) {
                     await recordApprovalChange({ req, previousTask, updatedTask, note });

@@ -60,6 +60,10 @@ const buildStatusMessage = ({ actor, oldStatus, newStatus, note, extraContext })
         return `Task marked pending by ${actor.name}${roleLabel}`;
     }
 
+    if (newStatus === 'reassigned' && oldStatus !== 'reassigned') {
+        return `Task reassigned by ${actor.name}${roleLabel}`;
+    }
+
     return `Task status changed by ${actor.name}${roleLabel}`;
 };
 
@@ -396,6 +400,33 @@ const recordTaskUpdate = async ({
     });
 };
 
+const recordTaskReassigned = async ({
+    req,
+    previousTask,
+    updatedTask,
+    changes,
+    note = ''
+}) => {
+    if (!previousTask || !updatedTask) return null;
+    const actor = getActorInfo(req);
+    const role = normaliseRole(actor.role) || 'user';
+    const lines = buildUpdateLines(changes);
+    const message = `${actor.name} (${role}) reassigned task. ${lines.join(' | ')}${note ? ` Note: ${note}` : ''}`;
+
+    return createHistoryAndComment({
+        taskId: updatedTask._id,
+        actor,
+        action: 'task_reassigned',
+        message,
+        oldStatus: previousTask.status,
+        newStatus: updatedTask.status,
+        note,
+        commentContent: '',
+        createComment: false,
+        additionalData: { changes: changes || {} }
+    });
+};
+
 const recordTaskDeleted = async ({
     req,
     task,
@@ -427,6 +458,7 @@ module.exports = {
     recordStatusChange,
     recordApprovalChange,
     recordTaskUpdate,
+    recordTaskReassigned,
     recordTaskDeleted,
     formatStatus
 };
