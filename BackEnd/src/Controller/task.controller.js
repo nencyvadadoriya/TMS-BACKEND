@@ -342,18 +342,11 @@ async function userCanAccessTask(task, user) {
 
     const assignedByEmail = normalizeEmail(task?.assignedBy);
 
-
-
     if (requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) return true;
 
-
-
     if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
-
         const scope = await resolveTaskScopeEmails(user);
-
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
-
     }
 
 
@@ -364,21 +357,14 @@ async function userCanAccessTask(task, user) {
 
         if (rmEmail && (assignedToEmail === rmEmail || assignedByEmail === rmEmail)) return true;
 
-
-
         return false;
-
     }
 
 
 
     if (requesterRole === 'ob_manager') {
-
         const obEmail = normalizeEmail(task?.obManagerEmail);
-
         if (requesterEmail && obEmail && obEmail === requesterEmail) return true;
-
-
 
         const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
 
@@ -424,28 +410,16 @@ async function userCanAccessTask(task, user) {
 
         }
 
-
-
         return false;
-
     }
-
-
 
     if (requesterRole === 'manager' || requesterRole === 'md_manager') {
-
         const scope = await resolveTaskScopeEmails(user);
-
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
-
     }
 
-
-
     if (isAssistantRoleKey(requesterRole)) {
-
         return requesterEmail && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail);
-
     }
 
 
@@ -493,7 +467,6 @@ function canViewTaskReviews(user) {
         || r === 'super_admin'
 
         || r === 'ob_manager'
-
         || r === 'manager'
 
         || r === 'md_manager'
@@ -2171,20 +2144,12 @@ exports.updateTask = async (req, res) => {
 
 
         const hasDueDateKey = Object.prototype.hasOwnProperty.call(updates || {}, 'dueDate');
-
         if (hasDueDateKey && isSpeedEcomTask && !isAssignee) {
-
             return res.status(403).json({
-
                 success: false,
-
                 message: 'Only the assignee can update due date for Speed E Com tasks'
-
             });
-
         }
-
-
 
         const KEYURI_EMAIL = normalizeEmail('keyurismartbiz@gmail.com');
 
@@ -2253,258 +2218,131 @@ exports.updateTask = async (req, res) => {
                 message: 'This task has been permanently approved and cannot be edited'
 
             });
-
         }
-
-
 
         // Permissions:
-
         // - Assignee can update status (complete/pending)
-
         // - Admin can update status and approval
-
         // - Only assigner can update other fields (edit task details)
-
         if (otherUpdateKeys.length > 0) {
-
             const isObManager = requesterRole === 'ob_manager';
 
-
-
             const canEditTaskDetails = Boolean(
-
                 isAdmin
-
                 || isAssigner
-
                 || ((requesterRole === 'rm' || requesterRole === 'am') && (await userCanAccessTask(previousTask, req.user)))
-
             );
-
-
 
             const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
-
             const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
 
-
-
             const allowedKeyuriUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
-
             const keyuriOnlyTouchesAssignedTo = Boolean(
-
                 requesterEmail && requesterEmail === KEYURI_EMAIL &&
-
                 otherUpdateKeys.every((k) => allowedKeyuriUpdateKeys.has(k))
-
             );
 
-
-
             if (obManagerOnlyTouchesAssignedTo) {
-
                 // Only allow reassignment under the global KEYURI->RUTU restriction above.
-
                 // OB Manager can reassign only tasks created by manager/md_manager to assistants
-
                 const assignee = updates.assignedTo ? normalizeEmail(updates.assignedTo) : '';
-
                 if (!assignee) {
-
                     return res.status(400).json({ success: false, message: 'Assignee email is required' });
-
                 }
-
-
 
                 // Preserve routing: if task came via OB Manager, keep obManagerEmail; if missing (older tasks), backfill to current OB Manager
-
                 const prevObEmail = normalizeEmail(previousTask.obManagerEmail);
-
                 if (requesterEmail) {
-
                     updates.obManagerEmail = prevObEmail || requesterEmail;
-
                 }
-
-
 
                 const assignerEmail = normalizeEmail(previousTask.assignedBy);
-
                 const assignerUser = assignerEmail ? await User.findOne({ email: assignerEmail }).select('role').lean() : null;
-
                 const assignerRole = roleOf(assignerUser);
-
                 if (assignerRole !== 'manager' && assignerRole !== 'md_manager') {
-
                     return res.status(403).json({ success: false, message: 'OB Manager can reassign only Manager/MD Manager tasks' });
-
                 }
-
-
 
                 const assigneeUser = await User.findOne({ email: assignee }).select('role').lean();
-
                 const assigneeRole = roleOf(assigneeUser);
-
                 if (!isAssistantRoleKey(assigneeRole)) {
-
                     return res.status(403).json({ success: false, message: 'OB Manager can assign tasks only to Assistant' });
-
                 }
-
             } else if (keyuriOnlyTouchesAssignedTo) {
-
                 // Allow Keyuri to reassign tasks even if not the original assigner.
-
                 // Restrict targets to Rutu or Sub Assistance.
-
                 if (!nextAssignedTo) {
-
                     return res.status(400).json({ success: false, message: 'Assignee email is required' });
-
                 }
-
-
 
                 if (isReassignment && RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
-
                     const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
-
                     const assigneeRole = roleOf(assigneeUser);
-
                     if (assigneeRole !== 'sub_assistance') {
-
                         return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
-
                     }
-
                 }
-
             } else {
-
                 if (!canEditTaskDetails) {
-
                     return res.status(403).json({
-
                         success: false,
-
                         message: 'You are not authorized to update this task'
-
                     });
-
                 }
-
-
 
                 // If a Manager/MD Manager is editing the task (including reassignment), enforce assignee role rules
-
                 if ((requesterRole === 'manager' || requesterRole === 'md_manager') && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo')) {
-
                     const nextAssigneeEmail = normalizeEmail(updates.assignedTo);
-
                     if (!nextAssigneeEmail) {
-
                         return res.status(400).json({ success: false, message: 'Assignee email is required' });
-
                     }
-
-
 
                     const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
-
                     const assigneeRole = roleOf(assigneeUser);
 
-
-
                     const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
-
                     const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
-
                     const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
 
-
-
                     if (assigneeRole && !isAllowed) {
-
                         return res.status(403).json({
-
                             success: false,
-
                             message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
-
                         });
-
                     }
 
-
-
                     // Track routing via OB Manager (so OB Manager can continue to see it after forwarding)
-
                     const nextTypeKey = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
-
                     const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
-
                     updates.obManagerEmail = assigneeRole === 'ob_manager'
-
                         ? nextAssigneeEmail
-
                         : (nextTypeKey === 'other work' && keyuriEmail && nextAssigneeEmail === keyuriEmail ? nextAssigneeEmail : null);
-
                 }
-
             }
-
         } else {
-
             if (hasStatusKey) {
-
                 const isObManager = requesterRole === 'ob_manager';
-
                 // Only the assignee can change status (admin/super_admin allowed).
-
                 // OB Manager is not allowed to change status even if assigned.
-
                 if (isObManager || !isAssignee) {
-
                     return res.status(403).json({
-
                         success: false,
-
                         message: 'You are not authorized to update this task'
-
                     });
-
                 }
-
             }
-
-
 
             if (hasApprovalKey && !(isAdmin || isAssigner)) {
-
                 // Allow assignee to clear approval only when moving to pending
-
                 const wantsClearApproval = isPendingTransition && updates.completedApproval === false;
-
                 if (!wantsClearApproval || !isAssignee) {
-
                     return res.status(403).json({
-
                         success: false,
-
                         message: 'You are not authorized to update this task'
-
                     });
-
                 }
-
             }
-
         }
-
-
 
         const statusChanged = updates.status != null && String(updates.status) !== String(previousTask.status);
 
@@ -2532,96 +2370,50 @@ exports.updateTask = async (req, res) => {
 
         if ((requesterRole === 'manager' || requesterRole === 'md_manager') && otherUpdateKeys.length > 0) {
 
-
-
             const nextTaskType = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
-
             if (nextTaskType === 'company' && requesterRole !== 'md_manager') {
-
                 return res.status(403).json({
-
                     success: false,
-
                     message: 'Managers cannot assign company-level tasks'
-
                 });
-
             }
 
-
-
             const hasBrandChange = Boolean(updates.brandId || updates.brand || updates.companyName || updates.company);
-
             if (hasBrandChange) {
-
                 const resolved = await resolveBrandFromRequest({
-
                     brandId: updates.brandId || previousTask.brandId,
-
                     brandName: updates.brand || previousTask.brand,
-
                     companyName: updates.companyName || updates.company || previousTask.companyName
-
                 });
-
-
 
                 const resolvedBrandId = resolved.brandId ? resolved.brandId.toString() : '';
 
-
-
                 if (requesterRole === 'manager') {
-
                     if (!resolvedBrandId || !mongoose.Types.ObjectId.isValid(resolvedBrandId)) {
-
                         return res.status(400).json({
-
                             success: false,
-
                             message: 'Managers must assign tasks to an allowed brand'
-
                         });
-
                     }
-
-
 
                     const allowedBrandIds = await managerAllowedBrandIdSet(req.user);
-
                     if (!allowedBrandIds.has(resolvedBrandId)) {
-
                         return res.status(403).json({
-
                             success: false,
-
                             message: 'You are not allowed to assign tasks for this brand'
-
                         });
-
                     }
 
-
-
                     updates.brandId = resolvedBrandId;
-
                     updates.brand = resolved.brand;
-
                     updates.companyName = resolved.companyName;
-
                 } else {
-
                     // md_manager: allow any brand (even if not found). Store brandId only when resolvable.
-
                     updates.brandId = (resolvedBrandId && mongoose.Types.ObjectId.isValid(resolvedBrandId)) ? resolvedBrandId : null;
-
                     updates.brand = (resolved.brand || '').toString();
-
                     updates.companyName = (resolved.companyName || '').toString();
-
                 }
-
             }
-
         }
 
 
