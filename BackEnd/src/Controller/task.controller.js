@@ -1,3 +1,4 @@
+
     // controllers/task.controller.js
 
 const mongoose = require('mongoose');
@@ -2137,14 +2138,18 @@ exports.updateTask = async (req, res) => {
 
         const SPEED_E_COM_COMPANY_KEY = 'speedecom';
 
+        const MD_IMPEX_COMPANY_KEY = 'mdimpex';
+
         const taskCompanyKey = normalizeCompanyKey(previousTask.companyName || previousTask.company);
 
         const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
-
-
+        const isMdImpexTask = taskCompanyKey === MD_IMPEX_COMPANY_KEY;
 
         const hasDueDateKey = Object.prototype.hasOwnProperty.call(updates || {}, 'dueDate');
-        if (hasDueDateKey && isSpeedEcomTask && !isAssignee) {
+        const canEditDueDateForSpeedEcom = Boolean(
+            isAssignee || (isAssigner && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo'))
+        );
+        if (hasDueDateKey && isSpeedEcomTask && !canEditDueDateForSpeedEcom) {
             return res.status(403).json({
                 success: false,
                 message: 'Only the assignee can update due date for Speed E Com tasks'
@@ -2275,7 +2280,9 @@ exports.updateTask = async (req, res) => {
                     return res.status(400).json({ success: false, message: 'Assignee email is required' });
                 }
 
-                if (isReassignment && RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
+                const isRutu = RUTU_EMAIL && nextAssignedTo === RUTU_EMAIL;
+
+                if (isReassignment && !isRutu) {
                     const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
                     const assigneeRole = roleOf(assigneeUser);
                     if (assigneeRole !== 'sub_assistance') {
@@ -2284,10 +2291,14 @@ exports.updateTask = async (req, res) => {
                 }
             } else {
                 if (!canEditTaskDetails) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'You are not authorized to update this task'
-                    });
+                    // Special case: Allow Keyuri to edit "MD Impex" tasks even if not assigner
+                    const isKeyuri = requesterEmail === KEYURI_EMAIL;
+                    if (!(isKeyuri && isMdImpexTask)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: 'You are not authorized to update this task'
+                        });
+                    }
                 }
 
                 // If a Manager/MD Manager is editing the task (including reassignment), enforce assignee role rules
