@@ -888,7 +888,7 @@ exports.getAllTasks = async (req, res) => {
 
 
 
-            const teamRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'manager'];
+            const teamRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'sub-assistance', 'manager'];
 
             const assistantDocs = companySafe
 
@@ -972,7 +972,7 @@ exports.getAllTasks = async (req, res) => {
 
 
 
-            const teamRoles = ['manager', 'assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const teamRoles = ['manager', 'assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'sub-assistance'];
 
             const teamDocs = companySafe
 
@@ -3994,12 +3994,6 @@ exports.approveTask = async (req, res) => {
     }
 
 };
-
-
-
-// controllers/task.controller.js में ये function add करें (अगर नहीं है):
-
-
 
 exports.deleteTask = async (req, res) => {
 
