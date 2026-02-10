@@ -12,5 +12,6 @@ route.use("/company-brand-task-types", require("./companyBrandTaskType.route"))
 route.use("/company-task-types", require("./companyTaskType.route"))
 route.use("/assign", require("./assign.route"))
 route.use("/access", require("./access.route"))
+route.use("/reminders", require("./reminder.route"))
 
 module.exports = route;
