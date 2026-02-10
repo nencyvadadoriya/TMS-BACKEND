@@ -3,6 +3,8 @@ const { getMessaging } = require('./firebaseAdmin.util');
 
 const normalizeEmail = (email) => (email || '').toString().trim().toLowerCase();
 
+const normalizeText = (v) => (v == null ? '' : String(v)).trim();
+
 const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
   const emailKey = normalizeEmail(toEmail);
   if (!emailKey) return;
@@ -65,6 +67,64 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
   }
 };
 
+const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }) => {
+  const emailKey = normalizeEmail(toEmail);
+  if (!emailKey) return;
+
+  const tokens = await DeviceToken.find({
+    userEmail: emailKey,
+    revoked: { $ne: true }
+  })
+    .select('token')
+    .lean();
+
+  const tokenList = (tokens || []).map((t) => (t?.token || '').toString().trim()).filter(Boolean);
+  if (tokenList.length === 0) {
+    console.log('[push] no tokens for userEmail:', emailKey);
+    return;
+  }
+
+  const title = 'Task reminder';
+  const who = normalizeText(fromName) || 'Someone';
+  const taskTitle = normalizeText(task?.title) || 'a task';
+  const msg = normalizeText(reminderMessage);
+  const body = msg ? `${who}: ${msg}` : `${taskTitle} (reminder from ${who})`;
+  const url = '/login';
+
+  const payload = {
+    tokens: tokenList,
+    data: {
+      title,
+      body,
+      url,
+      kind: 'task_reminder',
+      taskId: task?._id ? String(task._id) : ''
+    }
+  };
+
+  const messaging = getMessaging();
+  if (!messaging) {
+    console.log('[push] skipped (firebase not configured) for userEmail:', emailKey);
+    return;
+  }
+
+  const resp = await messaging.sendEachForMulticast(payload);
+
+  const invalidTokens = [];
+  (resp.responses || []).forEach((r, idx) => {
+    if (r.success) return;
+    const code = r.error?.code || '';
+    if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+      invalidTokens.push(tokenList[idx]);
+    }
+  });
+
+  if (invalidTokens.length > 0) {
+    await DeviceToken.updateMany({ token: { $in: invalidTokens } }, { $set: { revoked: true, lastSeenAt: new Date() } });
+  }
+};
+
 module.exports = {
-  sendTaskAssignedPush
+  sendTaskAssignedPush,
+  sendTaskReminderPush
 };
