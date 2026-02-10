@@ -178,14 +178,9 @@ async function userCanAccessTask(task, user) {
         obManagerEmail === requesterEmail
     )) return true;
 
-    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar' || requesterRole === 'manager' || requesterRole === 'md_manager') {
+    if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar' || requesterRole === 'manager' || requesterRole === 'md_manager' || requesterRole === 'am') {
         const scope = await resolveTaskScopeEmails(user);
         if (scope.has(assignedToEmail) || scope.has(assignedByEmail)) return true;
-    }
-
-    if (requesterRole === 'am') {
-        const rmEmail = await resolveRmEmailForAmUser(user);
-        if (rmEmail && (assignedToEmail === rmEmail || assignedByEmail === rmEmail)) return true;
     }
 
     if (requesterRole === 'ob_manager') {
@@ -1078,7 +1073,15 @@ exports.updateTask = async (req, res) => {
         const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
 
         const hasDueDateKey = Object.prototype.hasOwnProperty.call(updates || {}, 'dueDate');
-        // Due date update is allowed for everyone who has edit access
+        const canEditDueDateForSpeedEcom = Boolean(
+            isAssignee || (isAssigner && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo'))
+        );
+        if (hasDueDateKey && isSpeedEcomTask && !canEditDueDateForSpeedEcom) {
+            return res.status(403).json({
+                success: false,
+                message: 'Only the assignee can update due date for Speed E Com tasks'
+            });
+        }
 
         const KEYURI_EMAIL = normalizeEmail('keyurismartbiz@gmail.com');
         const RUTU_EMAIL = normalizeEmail('rutusmartbiz@gmail.com');
@@ -1114,7 +1117,118 @@ exports.updateTask = async (req, res) => {
                 success: false,
                 message: 'This task has been permanently approved and cannot be edited'
             });
-        } // Added the missing closing brace here
+        }
+
+        if (otherUpdateKeys.length > 0) {
+            const isObManager = requesterRole === 'ob_manager';
+
+            const canEditTaskDetails = Boolean(
+                isAdmin
+                || isAssigner
+                || (requesterEmail === KEYURI_EMAIL)
+                || ((requesterRole === 'rm' || requesterRole === 'am') && (await userCanAccessTask(previousTask, req.user)))
+            );
+
+            const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
+            const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
+
+            const allowedKeyuriUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
+            const keyuriOnlyTouchesAssignedTo = Boolean(
+                requesterEmail && requesterEmail === KEYURI_EMAIL &&
+                otherUpdateKeys.every((k) => allowedKeyuriUpdateKeys.has(k))
+            );
+
+            if (obManagerOnlyTouchesAssignedTo) {
+                const assignee = updates.assignedTo ? normalizeEmail(updates.assignedTo) : '';
+                if (!assignee) {
+                    return res.status(400).json({ success: false, message: 'Assignee email is required' });
+                }
+
+                const prevObEmail = normalizeEmail(previousTask.obManagerEmail);
+                if (requesterEmail) {
+                    updates.obManagerEmail = prevObEmail || requesterEmail;
+                }
+
+                const assignerEmail = normalizeEmail(previousTask.assignedBy);
+                const assignerUser = assignerEmail ? await User.findOne({ email: assignerEmail }).select('role').lean() : null;
+                const assignerRole = roleOf(assignerUser);
+                if (assignerRole !== 'manager' && assignerRole !== 'md_manager') {
+                    return res.status(403).json({ success: false, message: 'OB Manager can reassign only Manager/MD Manager tasks' });
+                }
+
+                const assigneeUser = await User.findOne({ email: assignee }).select('role').lean();
+                const assigneeRole = roleOf(assigneeUser);
+                if (!isAssistantRoleKey(assigneeRole)) {
+                    return res.status(403).json({ success: false, message: 'OB Manager can assign tasks only to Assistant' });
+                }
+            } else if (keyuriOnlyTouchesAssignedTo) {
+                if (!nextAssignedTo) {
+                    return res.status(400).json({ success: false, message: 'Assignee email is required' });
+                }
+
+                if (isReassignment && RUTU_EMAIL && nextAssignedTo !== RUTU_EMAIL) {
+                    const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
+                    const assigneeRole = roleOf(assigneeUser);
+                    if (assigneeRole !== 'sub_assistance') {
+                        return res.status(403).json({ success: false, message: 'You do not have permission to reassign tasks' });
+                    }
+                }
+            } else {
+                if (!canEditTaskDetails) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not authorized to update this task'
+                    });
+                }
+
+                if ((requesterRole === 'manager' || requesterRole === 'md_manager') && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo')) {
+                    const nextAssigneeEmail = normalizeEmail(updates.assignedTo);
+                    if (!nextAssigneeEmail) {
+                        return res.status(400).json({ success: false, message: 'Assignee email is required' });
+                    }
+
+                    const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
+                    const assigneeRole = roleOf(assigneeUser);
+
+                    const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
+                    const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
+                    const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
+
+                    if (assigneeRole && !isAllowed) {
+                        return res.status(403).json({
+                            success: false,
+                            message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
+                        });
+                    }
+
+                    const nextTypeKey = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
+                    const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
+                    updates.obManagerEmail = assigneeRole === 'ob_manager'
+                        ? nextAssigneeEmail
+                        : (nextTypeKey === 'other work' && keyuriEmail && nextAssigneeEmail === keyuriEmail ? nextAssigneeEmail : null);
+                }
+            }
+        } else {
+            if (hasStatusKey) {
+                const isObManager = requesterRole === 'ob_manager';
+                if (isObManager || !isAssignee) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not authorized to update this task'
+                    });
+                }
+            }
+
+            if (hasApprovalKey && !(isAdmin || isAssigner)) {
+                const wantsClearApproval = isPendingTransition && updates.completedApproval === false;
+                if (!wantsClearApproval || !isAssignee) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not authorized to update this task'
+                    });
+                }
+            }
+        }
 
         const statusChanged = updates.status != null && String(updates.status) !== String(previousTask.status);
         if (statusChanged) {
