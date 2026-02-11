@@ -2132,6 +2132,18 @@ exports.updateTask = async (req, res) => {
 
         const isAssignee = requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail;
 
+        const requesterRoleKey = roleOf(req.user);
+
+        const previousAssignerEmail = normalizeEmail(previousTask.assignedBy);
+        const previousAssignerUser = previousAssignerEmail
+            ? await User.findOne({ email: previousAssignerEmail }).select('role').lean()
+            : null;
+        const previousAssignerRoleKey = roleOf(previousAssignerUser);
+
+        const canAmReassignRmTask = Boolean(
+            requesterRoleKey === 'am' && previousAssignerRoleKey === 'rm'
+        );
+
 
 
         const normalizeCompanyKey = (value) => normalizeText(value).toLowerCase().replace(/\s+/g, '');
@@ -2145,16 +2157,16 @@ exports.updateTask = async (req, res) => {
         const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
         const isMdImpexTask = taskCompanyKey === MD_IMPEX_COMPANY_KEY;
 
+        console.log('Task Debug:', { 
+            id, 
+            taskCompanyKey, 
+            isSpeedEcomTask, 
+            requesterEmail, 
+            assignedTo: previousTask.assignedTo,
+            isAssignee: requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail
+        });
+
         const hasDueDateKey = Object.prototype.hasOwnProperty.call(updates || {}, 'dueDate');
-        const canEditDueDateForSpeedEcom = Boolean(
-            isAssignee || (isAssigner && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo'))
-        );
-        if (hasDueDateKey && isSpeedEcomTask && !canEditDueDateForSpeedEcom) {
-            return res.status(403).json({
-                success: false,
-                message: 'Only the assignee can update due date for Speed E Com tasks'
-            });
-        }
 
         const KEYURI_EMAIL = normalizeEmail('keyurismartbiz@gmail.com');
 
@@ -2170,38 +2182,50 @@ exports.updateTask = async (req, res) => {
 
         const isReassignment = Boolean(hasAssignedToKey && nextAssignedTo && nextAssignedTo !== prevAssignedTo);
 
+        const dueDateProvided = Object.prototype.hasOwnProperty.call(req.body || {}, 'dueDate');
+        const nextDueDate = dueDateProvided ? (updates.dueDate ? new Date(updates.dueDate) : null) : null;
+        const prevDueDate = previousTask?.dueDate ? new Date(previousTask.dueDate) : null;
 
+        const nextDueMs = nextDueDate && !Number.isNaN(nextDueDate.getTime()) ? nextDueDate.getTime() : null;
+        const prevDueMs = prevDueDate && !Number.isNaN(prevDueDate.getTime()) ? prevDueDate.getTime() : null;
+        const dueDateActuallyChanged = dueDateProvided && nextDueMs !== prevDueMs;
 
-        const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
-
-        const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
-
-
-
-        // If assignee changes (reassignment) and client didn't explicitly request a status change,
-
-        // mark task as reassigned so it is visible in UI and history.
-
-        if (isReassignment && !hasStatusKey) {
-
-            updates.status = 'reassigned';
-
+        // Speed E Com: allow due date change if it's a reassignment OR if explicitly allowed for SpeedEcom
+        if (dueDateActuallyChanged && isSpeedEcomTask) {
+            const canEditDueDateForSpeedEcom = Boolean(
+                isAssigner || canAmReassignRmTask
+            );
+            if (!canEditDueDateForSpeedEcom) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Due date cannot be changed after task creation'
+                });
+            }
         }
 
 
 
-        // If assignee moves task back to pending, force-clear approval on the server.
+        const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
 
-        // (This should not block assignee.)
+        // Speed E Com specific reassignment status logic
+        if (isSpeedEcomTask && hasDueDateKey && !hasStatusKey) {
+            updates.status = 'reassigned';
+        }
 
+        // If assignee changes (reassignment) and client didn't explicitly request a status change,
+        // mark task as reassigned so it is visible in UI and history.
+        if (isReassignment && !hasStatusKey) {
+            updates.status = 'reassigned';
+        }
+
+
+
+        // If assignee moves task back to pending or in-progress, force-clear approval on the server.
         const desiredStatus = hasStatusKey ? String(updates.status || '').toLowerCase() : '';
+        const isPendingOrInProgressTransition = hasStatusKey && (desiredStatus === 'pending' || desiredStatus === 'in-progress');
 
-        const isPendingTransition = hasStatusKey && desiredStatus === 'pending';
-
-        if (isPendingTransition) {
-
+        if (isPendingOrInProgressTransition) {
             updates.completedApproval = false;
-
         }
 
 
@@ -2226,17 +2250,41 @@ exports.updateTask = async (req, res) => {
         }
 
         // Permissions:
-        // - Assignee can update status (complete/pending)
+        // - Assignee can update status (complete/pending/in-progress)
         // - Admin can update status and approval
         // - Only assigner can update other fields (edit task details)
-        if (otherUpdateKeys.length > 0) {
+        
+        // SPEED E COM AUTH OVERRIDE: 
+        // If it's Speed E Com and current user is assignee, 
+        // and they are NOT trying to change restricted fields (like title, company, etc.), 
+        // we grant authorization regardless of otherUpdateKeys length if those keys are standard frontend noise.
+        const isSpeedEcomAssignee = isSpeedEcomTask && isAssignee;
+        const statusOnlyFields = new Set(['status', 'completedApproval', 'statusUpdatedAt', 'assignedToUser']);
+        const isActuallyChangingRestrictedFields = otherUpdateKeys.some(k => !statusOnlyFields.has(k));
+
+        if (isSpeedEcomAssignee && !isActuallyChangingRestrictedFields) {
+            // Authorized - Skip further detail and permission checks
+            console.log('Speed E Com status update authorized for assignee (Final Override):', requesterEmail);
+        } else if (otherUpdateKeys.length > 0) {
             const isObManager = requesterRole === 'ob_manager';
 
             const canEditTaskDetails = Boolean(
                 isAdmin
                 || isAssigner
+                || canAmReassignRmTask
                 || ((requesterRole === 'rm' || requesterRole === 'am') && (await userCanAccessTask(previousTask, req.user)))
             );
+
+            if (!canEditTaskDetails) {
+                // Special case: Allow Keyuri to edit "MD Impex" tasks even if not assigner
+                const isKeyuri = requesterEmail === KEYURI_EMAIL;
+                if (!(isKeyuri && isMdImpexTask)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You are not authorized to update this task'
+                    });
+                }
+            }
 
             const allowedObManagerUpdateKeys = new Set(['assignedTo', 'assignedToUser']);
             const obManagerOnlyTouchesAssignedTo = isObManager && otherUpdateKeys.every((k) => allowedObManagerUpdateKeys.has(k));
@@ -2248,40 +2296,30 @@ exports.updateTask = async (req, res) => {
             );
 
             if (obManagerOnlyTouchesAssignedTo) {
-                // Only allow reassignment under the global KEYURI->RUTU restriction above.
-                // OB Manager can reassign only tasks created by manager/md_manager to assistants
                 const assignee = updates.assignedTo ? normalizeEmail(updates.assignedTo) : '';
                 if (!assignee) {
                     return res.status(400).json({ success: false, message: 'Assignee email is required' });
                 }
-
-                // Preserve routing: if task came via OB Manager, keep obManagerEmail; if missing (older tasks), backfill to current OB Manager
                 const prevObEmail = normalizeEmail(previousTask.obManagerEmail);
                 if (requesterEmail) {
                     updates.obManagerEmail = prevObEmail || requesterEmail;
                 }
-
                 const assignerEmail = normalizeEmail(previousTask.assignedBy);
                 const assignerUser = assignerEmail ? await User.findOne({ email: assignerEmail }).select('role').lean() : null;
                 const assignerRole = roleOf(assignerUser);
                 if (assignerRole !== 'manager' && assignerRole !== 'md_manager') {
                     return res.status(403).json({ success: false, message: 'OB Manager can reassign only Manager/MD Manager tasks' });
                 }
-
                 const assigneeUser = await User.findOne({ email: assignee }).select('role').lean();
                 const assigneeRole = roleOf(assigneeUser);
                 if (!isAssistantRoleKey(assigneeRole)) {
                     return res.status(403).json({ success: false, message: 'OB Manager can assign tasks only to Assistant' });
                 }
             } else if (keyuriOnlyTouchesAssignedTo) {
-                // Allow Keyuri to reassign tasks even if not the original assigner.
-                // Restrict targets to Rutu or Sub Assistance.
                 if (!nextAssignedTo) {
                     return res.status(400).json({ success: false, message: 'Assignee email is required' });
                 }
-
                 const isRutu = RUTU_EMAIL && nextAssignedTo === RUTU_EMAIL;
-
                 if (isReassignment && !isRutu) {
                     const assigneeUser = await User.findOne({ email: nextAssignedTo }).select('role').lean();
                     const assigneeRole = roleOf(assigneeUser);
@@ -2290,39 +2328,22 @@ exports.updateTask = async (req, res) => {
                     }
                 }
             } else {
-                if (!canEditTaskDetails) {
-                    // Special case: Allow Keyuri to edit "MD Impex" tasks even if not assigner
-                    const isKeyuri = requesterEmail === KEYURI_EMAIL;
-                    if (!(isKeyuri && isMdImpexTask)) {
-                        return res.status(403).json({
-                            success: false,
-                            message: 'You are not authorized to update this task'
-                        });
-                    }
-                }
-
-                // If a Manager/MD Manager is editing the task (including reassignment), enforce assignee role rules
                 if ((requesterRole === 'manager' || requesterRole === 'md_manager') && Object.prototype.hasOwnProperty.call(updates || {}, 'assignedTo')) {
                     const nextAssigneeEmail = normalizeEmail(updates.assignedTo);
                     if (!nextAssigneeEmail) {
                         return res.status(400).json({ success: false, message: 'Assignee email is required' });
                     }
-
                     const assigneeUser = await User.findOne({ email: nextAssigneeEmail }).select('role').lean();
                     const assigneeRole = roleOf(assigneeUser);
-
                     const allowedForManager = assigneeRole === 'manager' || assigneeRole === 'ob_manager' || isAssistantRoleKey(assigneeRole);
                     const allowedForMdManager = allowedForManager || assigneeRole === 'md_manager';
                     const isAllowed = requesterRole === 'md_manager' ? allowedForMdManager : allowedForManager;
-
                     if (assigneeRole && !isAllowed) {
                         return res.status(403).json({
                             success: false,
                             message: 'Managers can assign tasks only to Manager/OB Manager/Assistant'
                         });
                     }
-
-                    // Track routing via OB Manager (so OB Manager can continue to see it after forwarding)
                     const nextTypeKey = (updates.taskType || updates.type || previousTask.taskType || '').toString().trim().toLowerCase();
                     const keyuriEmail = normalizeEmail('keyurismartbiz@gmail.com');
                     updates.obManagerEmail = assigneeRole === 'ob_manager'
@@ -2333,19 +2354,16 @@ exports.updateTask = async (req, res) => {
         } else {
             if (hasStatusKey) {
                 const isObManager = requesterRole === 'ob_manager';
-                // Only the assignee can change status (admin/super_admin allowed).
-                // OB Manager is not allowed to change status even if assigned.
-                if (isObManager || !isAssignee) {
+                const isAllowedAssignee = isAssignee && !isObManager;
+                if (!isAdmin && !isAssigner && !isAllowedAssignee) {
                     return res.status(403).json({
                         success: false,
                         message: 'You are not authorized to update this task'
                     });
                 }
             }
-
             if (hasApprovalKey && !(isAdmin || isAssigner)) {
-                // Allow assignee to clear approval only when moving to pending
-                const wantsClearApproval = isPendingTransition && updates.completedApproval === false;
+                const wantsClearApproval = isPendingOrInProgressTransition && updates.completedApproval === false;
                 if (!wantsClearApproval || !isAssignee) {
                     return res.status(403).json({
                         success: false,
@@ -2358,26 +2376,8 @@ exports.updateTask = async (req, res) => {
         const statusChanged = updates.status != null && String(updates.status) !== String(previousTask.status);
 
         if (statusChanged) {
-
             updates.statusUpdatedAt = Date.now();
-
         }
-
-
-
-        const dueDateProvided = Object.prototype.hasOwnProperty.call(req.body || {}, 'dueDate');
-
-        const nextDueDate = dueDateProvided ? (updates.dueDate ? new Date(updates.dueDate) : null) : null;
-
-        const prevDueDate = previousTask?.dueDate ? new Date(previousTask.dueDate) : null;
-
-        const nextDueMs = nextDueDate && !Number.isNaN(nextDueDate.getTime()) ? nextDueDate.getTime() : null;
-
-        const prevDueMs = prevDueDate && !Number.isNaN(prevDueDate.getTime()) ? prevDueDate.getTime() : null;
-
-        const dueDateChanged = dueDateProvided && nextDueMs !== prevDueMs;
-
-
 
         if ((requesterRole === 'manager' || requesterRole === 'md_manager') && otherUpdateKeys.length > 0) {
 
@@ -4047,9 +4047,19 @@ exports.deleteTask = async (req, res) => {
 
         const isAdmin = roleOf(user) === 'admin' || roleOf(user) === 'super_admin';
 
+        const normalizeCompanyKey = (value) => normalizeText(value).toLowerCase().replace(/\s+/g, '');
+        const SPEED_E_COM_COMPANY_KEY = 'speedecom';
+        const taskCompanyKey = normalizeCompanyKey(task.companyName || task.company);
+        const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
+
         const isAssigner = normalizeEmail(task.assignedBy) === normalizeEmail(user.email);
 
-        
+        if (isSpeedEcomTask && !isAdmin) {
+            return res.status(403).json({
+                success: false,
+                message: 'You are not authorized to delete this task'
+            });
+        }
 
         if (!isAdmin && !isAssigner) {
 
