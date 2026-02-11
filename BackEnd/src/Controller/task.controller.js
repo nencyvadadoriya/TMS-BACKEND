@@ -2132,6 +2132,24 @@ exports.updateTask = async (req, res) => {
 
         const isAssignee = requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail;
 
+        const hasStatusKeyEarly = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
+
+        // If assignee is updating status, the frontend may send extra fields (full task payload).
+        // For security + UX, we allow the assignee to update status, but we ignore any non-status fields.
+        if (isAssignee && hasStatusKeyEarly && !isAdmin && !isAssigner) {
+            const allowedKeysForAssigneeStatusUpdate = new Set([
+                'status',
+                'completedApproval',
+                'statusUpdatedAt'
+            ]);
+
+            for (const key of Object.keys(updates || {})) {
+                if (!allowedKeysForAssigneeStatusUpdate.has(key)) {
+                    delete updates[key];
+                }
+            }
+        }
+
         const requesterRoleKey = roleOf(req.user);
 
         const previousAssignerEmail = normalizeEmail(previousTask.assignedBy);
@@ -2189,6 +2207,9 @@ exports.updateTask = async (req, res) => {
         const nextDueMs = nextDueDate && !Number.isNaN(nextDueDate.getTime()) ? nextDueDate.getTime() : null;
         const prevDueMs = prevDueDate && !Number.isNaN(prevDueDate.getTime()) ? prevDueDate.getTime() : null;
         const dueDateActuallyChanged = dueDateProvided && nextDueMs !== prevDueMs;
+
+        // Backward-compatible alias (used later in google sync logic)
+        const dueDateChanged = dueDateActuallyChanged;
 
         // Speed E Com: allow due date change if it's a reassignment OR if explicitly allowed for SpeedEcom
         if (dueDateActuallyChanged && isSpeedEcomTask) {
