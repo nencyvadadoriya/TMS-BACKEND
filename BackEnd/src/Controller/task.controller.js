@@ -3996,6 +3996,19 @@ exports.approveTask = async (req, res) => {
 
         });
 
+        try {
+            if (updatedTask) {
+                const responseData = {
+                    ...updatedTask.toObject(),
+                    id: updatedTask._id,
+                    brand: await resolveBrandNameForTask(updatedTask)
+                };
+                emitTaskUpserted(responseData);
+            }
+        } catch (emitError) {
+            console.error('emitTaskUpserted failed in approveTask:', emitError);
+        }
+
         
 
     } catch (error) {
@@ -4219,6 +4232,22 @@ exports.deleteTask = async (req, res) => {
             message: 'Task deleted successfully'
 
         });
+
+        try {
+            const io = require('../realtime/socket').getIO();
+            const companyKey = require('../realtime/socket').normalizeCompanyKey(task.companyName || task.company);
+            const payload = {
+                type: 'task:deleted',
+                taskId: String(id)
+            };
+            if (companyKey) io.to(`company:${companyKey}`).emit('task:deleted', payload);
+            io.to('role:admin-like').emit('task:deleted', payload);
+            const assigneeEmail = normalizeEmail(task.assignedTo);
+            const assigneeUser = await User.findOne({ email: assigneeEmail }).select('_id').lean();
+            if (assigneeUser?._id) io.to(`user:${String(assigneeUser._id)}`).emit('task:deleted', payload);
+        } catch (emitError) {
+            console.error('Emit task:deleted failed:', emitError);
+        }
 
         
 

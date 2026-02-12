@@ -60,6 +60,10 @@ const buildStatusMessage = ({ actor, oldStatus, newStatus, note, extraContext })
         return `Task marked pending by ${actor.name}${roleLabel}`;
     }
 
+    if (newStatus === 'in-progress' && oldStatus !== 'in-progress') {
+        return `Task marked in-progress by ${actor.name}${roleLabel}`;
+    }
+
     if (newStatus === 'reassigned' && oldStatus !== 'reassigned') {
         return `Task reassigned by ${actor.name}${roleLabel}`;
     }
@@ -256,6 +260,10 @@ const recordStatusChange = async ({
             if (isAdmin) action = 'status_pending_by_admin';
             else if (isAssigner) action = 'status_pending_by_assigner';
             else action = 'status_pending_by_assignee';
+        } else if (newStatus === 'in-progress') {
+            if (isAdmin) action = 'status_inprogress_by_admin';
+            else if (isAssigner) action = 'status_inprogress_by_assigner';
+            else action = 'status_inprogress_by_assignee';
         } else {
             action = 'status_changed';
         }
@@ -290,7 +298,7 @@ const recordStatusChange = async ({
         newStatus,
         note,
         commentContent,
-        createComment: false
+        createComment: true
     });
 };
 
