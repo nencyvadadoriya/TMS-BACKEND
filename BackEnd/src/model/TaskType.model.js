@@ -8,6 +8,20 @@ const taskTypeSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  brandId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Brand',
+    required: false,
+    default: null,
+    index: true
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false,
+    default: null,
+    index: true
+  },
   name: {
     type: String,
     required: true,
@@ -30,6 +44,7 @@ const taskTypeSchema = new mongoose.Schema({
   versionKey: false
 });
 
-taskTypeSchema.index({ companyId: 1, name: 1 }, { unique: true });
+taskTypeSchema.index({ companyId: 1, brandId: 1, userId: 1, name: 1 }, { unique: true });
+taskTypeSchema.index({ name: 1 });
 
 module.exports = mongoose.model('TaskType', taskTypeSchema);

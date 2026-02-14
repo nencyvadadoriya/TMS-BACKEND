@@ -4,7 +4,6 @@ const User = require('../model/user.model');
 const Brand = require('../model/Brand.model');
 const TaskType = require('../model/TaskType.model');
 const UserBrandTaskType = require('../model/UserBrandTaskType.model');
-const CompanyBrandTaskType = require('../model/CompanyBrandTaskType.model');
 const Company = require('../model/Company.model');
 
 const { emitAssignmentUpserted, emitAssignmentsBulkUpserted } = require('../realtime/assignmentEvents');
@@ -472,31 +471,6 @@ exports.upsertAssignment = async (req, res) => {
       });
     }
 
-    if (taskTypeIds.length > 0) {
-      const mappingDocs = await CompanyBrandTaskType.find({
-        companyName: { $regex: `^${escapeRegex(canonicalCompanyName)}$`, $options: 'i' }
-      })
-        .select('taskTypeIds')
-        .lean();
-
-      const allowed = new Set(
-        (mappingDocs || [])
-          .flatMap((d) => (Array.isArray(d.taskTypeIds) ? d.taskTypeIds : []))
-          .map((id) => id.toString())
-          .filter(Boolean)
-      );
-
-      if (allowed.size > 0) {
-        const invalid = taskTypeIds.filter((id) => !allowed.has(id));
-        if (invalid.length > 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Selected task types are not allowed for this company'
-          });
-        }
-      }
-    }
-
     const update = {
       companyName: canonicalCompanyName,
       userId,
@@ -648,19 +622,6 @@ exports.bulkUpsertAssignments = async (req, res) => {
 
     const canonicalCompanyName = await resolveCanonicalCompanyName(companyName);
 
-    const mappingDocs = await CompanyBrandTaskType.find({
-      companyName: { $regex: `^${escapeRegex(canonicalCompanyName)}$`, $options: 'i' }
-    })
-      .select('taskTypeIds')
-      .lean();
-
-    const allowed = new Set(
-      (mappingDocs || [])
-        .flatMap((d) => (Array.isArray(d.taskTypeIds) ? d.taskTypeIds : []))
-        .map((id) => id.toString())
-        .filter(Boolean)
-    );
-
     const ops = [];
     const brandsToAdd = new Set();
     const brandsToMaybeRemove = new Set();
@@ -681,16 +642,6 @@ exports.bulkUpsertAssignments = async (req, res) => {
           success: false,
           message: 'Invalid taskTypeIds: expected Mongo ObjectIds'
         });
-      }
-
-      if (allowed.size > 0) {
-        const invalid = taskTypeIds.filter((id) => !allowed.has(id));
-        if (invalid.length > 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Selected task types are not allowed for this company'
-          });
-        }
       }
 
       if (taskTypeIds.length > 0) brandsToAdd.add(brandId);

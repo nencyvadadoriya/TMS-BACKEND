@@ -45,6 +45,25 @@ const normalizeText = (value) => (value == null ? '' : String(value)).trim();
 
 const normalizeEmail = (email) => normalizeText(email).toLowerCase();
 
+const normalizeTaskTypeCanonical = (value) => {
+
+    const raw = normalizeText(value);
+
+    if (!raw) return '';
+
+    const key = raw.toLowerCase().replace(/[\s-]+/g, ' ').trim();
+
+    if (key === 'troubleshoot' || key === 'trouble shoot' || key === 'trubbleshot' || key === 'trubble shoot') {
+
+        return 'Troubleshoot';
+
+    }
+
+    // keep existing for all other types
+    return raw;
+
+};
+
 
 
 const roleOf = (user) => {
@@ -110,6 +129,14 @@ async function resolveBrandNameForTask(task) {
             const name = normalizeText(brandDoc?.name);
 
             if (name) return name;
+
+        }
+
+
+
+        if (Object.prototype.hasOwnProperty.call(updates || {}, 'taskType')) {
+
+            updates.taskType = normalizeTaskTypeCanonical(updates.taskType);
 
         }
 
@@ -538,9 +565,12 @@ exports.addTask = async (req, res) => {
 
 
 
-        const priority = normalizeText(req.body?.priority) || 'medium';
+        const rawPriority = normalizeText(req.body?.priority);
+        const normalizedPriority = rawPriority.toLowerCase();
+        const allowedPriorities = new Set(['high', 'medium', 'low']);
+        const priority = allowedPriorities.has(normalizedPriority) ? normalizedPriority : 'medium';
 
-        const taskType = normalizeText(req.body?.taskType || req.body?.type) || 'regular';
+        const taskType = normalizeTaskTypeCanonical(normalizeText(req.body?.taskType || req.body?.type)) || 'regular';
 
 
 
@@ -2227,6 +2257,8 @@ exports.updateTask = async (req, res) => {
 
 
         const hasStatusKey = Object.prototype.hasOwnProperty.call(updates || {}, 'status');
+
+        const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
 
         // Speed E Com specific reassignment status logic
         if (isSpeedEcomTask && hasDueDateKey && !hasStatusKey) {

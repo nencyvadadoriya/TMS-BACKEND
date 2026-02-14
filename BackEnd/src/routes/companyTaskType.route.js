@@ -15,6 +15,6 @@ router.use(authMiddleware);
 
 router.get('/all', requireAnyModulePermission(['company_task_type', 'create_task', 'assign_task']), getAllCompanyTaskTypes);
 router.get('/', requireAnyModulePermission(['company_task_type', 'create_task', 'assign_task']), getCompanyTaskTypes);
-router.post('/', requireModulePermission('company_task_type'), upsertCompanyTaskTypes);
+router.post('/', requireAnyModulePermission(['company_task_type', 'create_task', 'assign_task']), upsertCompanyTaskTypes);
 
 module.exports = router;

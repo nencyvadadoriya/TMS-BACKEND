@@ -59,7 +59,7 @@ const ensureDefaultModules = async () => {
         { moduleId: 'assign_task', name: 'Assign Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'team', manager: 'own', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'team_page', name: 'Team', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
@@ -144,6 +144,11 @@ const ensureDefaultModules = async () => {
             if (String(row.moduleId) === 'user_management') {
                 const existingSbm = String(getDefaultValue('sbm') || '').toLowerCase();
                 if (!existingSbm || existingSbm === 'deny') setPayload['defaults.sbm'] = 'allow';
+            }
+
+            if (String(row.moduleId) === 'delete_task') {
+                const existingObManager = String(getDefaultValue('ob_manager') || '').toLowerCase();
+                if (!existingObManager || existingObManager === 'deny') setPayload['defaults.ob_manager'] = 'allow';
             }
             if (Object.keys(setPayload).length === 0) continue;
 

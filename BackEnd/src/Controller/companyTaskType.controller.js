@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 
 const TaskType = require('../model/TaskType.model');
-const CompanyTaskType = require('../model/CompanyTaskType.model');
 const Company = require('../model/Company.model');
 
 const normalizeText = (v) => (v || '').toString().trim();
@@ -25,18 +24,24 @@ const resolveCompanyFromName = async (companyName) => {
   return { id: company._id.toString(), name: (company.name || '').toString() };
 };
 
-const formatCompanyTaskTypes = async (doc) => {
-  const mapped = doc ? { ...doc, id: doc._id } : null;
-  const ids = Array.isArray(mapped?.taskTypeIds) ? mapped.taskTypeIds.map((id) => id.toString()) : [];
+const formatCompanyTaskTypes = async (company) => {
+  if (!company?.id) {
+    return {
+      id: '',
+      companyId: '',
+      companyName: '',
+      taskTypes: []
+    };
+  }
 
-  const taskTypes = ids.length
-    ? await TaskType.find({ _id: { $in: ids } }).sort({ name: 1 }).lean()
-    : [];
+  const taskTypes = await TaskType.find({ companyId: company.id })
+    .sort({ name: 1 })
+    .lean();
 
   return {
-    id: mapped?._id || '',
-    companyId: mapped?.companyId ? mapped.companyId.toString() : '',
-    companyName: (mapped?.companyName || '').toString(),
+    id: company.id,
+    companyId: company.id,
+    companyName: company.name,
     taskTypes: (taskTypes || []).map((t) => ({
       id: t._id,
       name: (t.name || '').toString()
@@ -56,28 +61,7 @@ exports.getCompanyTaskTypes = async (req, res) => {
       return res.status(200).json({ success: true, data: { companyName, taskTypes: [] } });
     }
 
-    const existing = await CompanyTaskType.findOne({ companyId: company.id }).lean();
-    if (!existing) {
-      const legacy = await CompanyTaskType.findOne({
-        companyId: null,
-        companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
-      }).lean();
-
-      if (!legacy) {
-        return res.status(200).json({ success: true, data: { companyName: company.name || companyName, taskTypes: [] } });
-      }
-
-      const migrated = await CompanyTaskType.findByIdAndUpdate(
-        legacy._id,
-        { $set: { companyId: company.id, companyName: company.name || legacy.companyName } },
-        { new: true }
-      ).lean();
-
-      const formatted = await formatCompanyTaskTypes(migrated);
-      return res.status(200).json({ success: true, data: formatted });
-    }
-
-    const formatted = await formatCompanyTaskTypes(existing);
+    const formatted = await formatCompanyTaskTypes(company);
     return res.status(200).json({ success: true, data: formatted });
   } catch (error) {
     console.error('Error fetching company task types:', error);
@@ -87,51 +71,48 @@ exports.getCompanyTaskTypes = async (req, res) => {
 
 exports.getAllCompanyTaskTypes = async (req, res) => {
   try {
-    const docs = await CompanyTaskType.find({}).select('companyId companyName taskTypeIds').lean();
+    const companies = await Company.find({ isDeleted: { $ne: true } })
+      .select('_id name')
+      .sort({ name: 1 })
+      .lean();
 
-    const companyIds = Array.from(
-      new Set(
-        (docs || [])
-          .map((d) => (d?.companyId ? d.companyId.toString() : ''))
-          .filter(Boolean)
-      )
-    );
+    const taskTypes = await TaskType.find({})
+      .select('companyId name')
+      .sort({ name: 1 })
+      .lean();
 
-    const companies = companyIds.length
-      ? await Company.find({ _id: { $in: companyIds }, isDeleted: { $ne: true } }).select('_id name').lean()
-      : [];
+    const taskTypesByCompany = new Map();
+    
+    (taskTypes || []).forEach(taskType => {
+      const companyId = taskType.companyId ? taskType.companyId.toString() : 'no-company';
+      if (!taskTypesByCompany.has(companyId)) {
+        taskTypesByCompany.set(companyId, []);
+      }
+      taskTypesByCompany.get(companyId).push({
+        id: taskType._id,
+        name: (taskType.name || '').toString()
+      });
+    });
 
-    const companyNameById = new Map((companies || []).map((c) => [c._id.toString(), (c.name || '').toString()]));
-
-    const allIds = Array.from(
-      new Set(
-        (docs || [])
-          .flatMap((d) => (Array.isArray(d.taskTypeIds) ? d.taskTypeIds : []))
-          .map((id) => id.toString())
-          .filter(Boolean)
-      )
-    );
-
-    const taskTypes = allIds.length
-      ? await TaskType.find({ _id: { $in: allIds } }).select('_id name').sort({ name: 1 }).lean()
-      : [];
-
-    const nameById = new Map((taskTypes || []).map((t) => [t._id.toString(), (t.name || '').toString()]));
-
-    const data = (docs || []).map((d) => {
-      const cid = d?.companyId ? d.companyId.toString() : '';
-      const ids = Array.isArray(d.taskTypeIds) ? d.taskTypeIds.map((id) => id.toString()).filter(Boolean) : [];
-      const resolved = ids
-        .map((id) => ({ id, name: nameById.get(id) || '' }))
-        .filter((t) => t.name);
-
+    const data = (companies || []).map(company => {
+      const companyId = company._id.toString();
       return {
-        id: d._id || '',
-        companyId: cid,
-        companyName: companyNameById.get(cid) || d.companyName || '',
-        taskTypes: resolved
+        id: companyId,
+        companyId: companyId,
+        companyName: (company.name || '').toString(),
+        taskTypes: taskTypesByCompany.get(companyId) || []
       };
     });
+
+    // Add task types without company if any exist
+    if (taskTypesByCompany.has('no-company')) {
+      data.push({
+        id: 'no-company',
+        companyId: '',
+        companyName: 'Unassigned',
+        taskTypes: taskTypesByCompany.get('no-company')
+      });
+    }
 
     return res.status(200).json({ success: true, data });
   } catch (error) {
@@ -170,81 +151,48 @@ exports.upsertCompanyTaskTypes = async (req, res) => {
       .map((v) => normalizeText(v))
       .filter(Boolean);
 
-    const resolvedIds = new Set(normalizedTaskTypeIds);
-
+    // Create new task types from names
+    const createdIds = new Set();
     if (normalizedTaskTypeNames.length > 0) {
       for (const name of normalizedTaskTypeNames) {
-        const doc = await TaskType.findOneAndUpdate(
-          { name, companyId: company.id },
-          { $set: { name, companyId: company.id, updatedBy: actorId }, $setOnInsert: { createdBy: actorId } },
-          { new: true, upsert: true }
-        );
-        resolvedIds.add(doc._id.toString());
+        try {
+          const doc = await TaskType.findOneAndUpdate(
+            { name, companyId: company.id },
+            { 
+              $set: { name, companyId: company.id, updatedBy: actorId }, 
+              $setOnInsert: { createdBy: actorId } 
+            },
+            { new: true, upsert: true }
+          );
+          createdIds.add(doc._id.toString());
+        } catch (err) {
+          // Skip duplicates
+          if (err.code !== 11000) {
+            throw err;
+          }
+        }
       }
     }
 
-    const incomingIds = Array.from(resolvedIds);
+    // Update existing task types to belong to this company
+    if (normalizedTaskTypeIds.length > 0) {
+      await TaskType.updateMany(
+        { 
+          _id: { $in: normalizedTaskTypeIds },
+          companyId: { $ne: company.id }
+        },
+        { 
+          $set: { 
+            companyId: company.id, 
+            updatedBy: actorId 
+          }
+        }
+      );
+    }
 
-    const existing = await CompanyTaskType.findOne({ companyId: company.id })
-      .select('_id taskTypeIds companyName companyId')
-      .lean();
-
-    const legacy = !existing
-      ? await CompanyTaskType.findOne({
-          companyId: null,
-          companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
-        })
-          .select('_id taskTypeIds companyName companyId')
-          .lean()
-      : null;
-
-    const target = existing || legacy;
-
-    const existingIds = Array.isArray(target?.taskTypeIds)
-      ? target.taskTypeIds.map((id) => id.toString())
-      : [];
-
-    const mergedIds = Array.from(new Set([...existingIds, ...incomingIds]))
-      .filter((id) => mongoose.Types.ObjectId.isValid(id));
-
-    const update = {
-      companyId: company.id,
-      companyName: company.name || target?.companyName || companyName,
-      taskTypeIds: mergedIds,
-      updatedBy: actorId
-    };
-
-    const saved = target?._id
-      ? await CompanyTaskType.findByIdAndUpdate(
-          target._id,
-          { $set: update, $setOnInsert: { createdBy: actorId } },
-          { new: true }
-        ).lean()
-      : await CompanyTaskType.create({ ...update, createdBy: actorId });
-
-    const doc = saved?.toObject ? saved.toObject() : saved;
-
-    const formatted = await formatCompanyTaskTypes(doc);
+    const formatted = await formatCompanyTaskTypes(company);
     return res.status(200).json({ success: true, data: formatted });
   } catch (error) {
-    if (error?.code === 11000) {
-      try {
-        const companyName = normalizeText(req.body?.companyName);
-        const company = await resolveCompanyFromName(companyName);
-        const existing = company?.id
-          ? await CompanyTaskType.findOne({ companyId: company.id }).lean()
-          : await CompanyTaskType.findOne({
-              companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
-            }).lean();
-        if (existing) {
-          const formatted = await formatCompanyTaskTypes(existing);
-          return res.status(200).json({ success: true, data: formatted });
-        }
-      } catch {
-        // ignore
-      }
-    }
-
     console.error('Error upserting company task types:', error);
     return res.status(500).json({ success: false, message: 'Failed to save company task types' });
   }
