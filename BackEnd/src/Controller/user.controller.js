@@ -20,6 +20,8 @@ const TaskHistory = require('../model/TaskHistory.model');
 
 const Brand = require('../model/Brand.model');
 
+const UserBrandTaskType = require('../model/UserBrandTaskType.model');
+
 const { sendOtpEmail, sendAccountCreatedEmail } = require('../middleware/email.message');
 
 const { _getEffectivePermissionsMap } = require('./access.controller');
@@ -53,6 +55,366 @@ const ROLE_PARENTS = {
     rm: ['sbm'],
 
     am: ['rm'],
+
+};
+
+
+
+const toObjectIdString = (value) => {
+
+    if (!value) return '';
+
+    if (typeof value === 'string') return value.trim();
+
+    if (typeof value === 'object') return String(value._id || value.id || '').trim();
+
+    return '';
+
+};
+
+
+
+const normalizeCompanyName = (value) => (value || '').toString().trim();
+
+
+
+const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) => {
+
+    // Makes AM's brand/taskType mapping follow the new RM and removes stale mappings from the old RM.
+
+    const safeAmId = toObjectIdString(amId);
+
+    const safeNewRmId = toObjectIdString(newRmId);
+
+    if (!mongoose.Types.ObjectId.isValid(safeAmId)) return;
+
+    if (!mongoose.Types.ObjectId.isValid(safeNewRmId)) return;
+
+
+
+    // Fetch current mappings
+
+    const [amMappings, rmMappings] = await Promise.all([
+
+        UserBrandTaskType.find({ userId: safeAmId }).select('_id companyName brandId taskTypeIds').lean(),
+
+        UserBrandTaskType.find({ userId: safeNewRmId }).select('_id companyName brandId brandName taskTypeIds').lean(),
+
+    ]);
+
+
+
+    const amKeySet = new Set(
+
+        (amMappings || []).map((m) => `${normalizeCompanyName(m?.companyName)}::${String(m?.brandId || '')}`)
+
+    );
+
+
+
+    const rmByKey = new Map(
+
+        (rmMappings || []).map((m) => [
+
+            `${normalizeCompanyName(m?.companyName)}::${String(m?.brandId || '')}`,
+
+            m
+
+        ])
+
+    );
+
+
+
+    // Step 1: remove AM mappings that are NOT present on new RM.
+
+    // This is the cleanup that breaks old RM/AM brand visibility.
+
+    const rmKeySet = new Set(rmByKey.keys());
+
+    const removeIds = (amMappings || [])
+
+        .filter((m) => {
+
+            const key = `${normalizeCompanyName(m?.companyName)}::${String(m?.brandId || '')}`;
+
+            return !rmKeySet.has(key);
+
+        })
+
+        .map((m) => toObjectIdString(m?._id))
+
+        .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    if (removeIds.length > 0) {
+
+        await UserBrandTaskType.deleteMany({ _id: { $in: removeIds } });
+
+    }
+
+
+
+    // Step 2: ensure AM has mappings for all brands that new RM has.
+
+    const upsertOps = [];
+
+    for (const [key, rmRow] of rmByKey.entries()) {
+
+        if (!rmRow) continue;
+
+        if (amKeySet.has(key)) continue;
+
+        const companyName = normalizeCompanyName(rmRow.companyName);
+
+        const brandId = toObjectIdString(rmRow.brandId);
+
+        if (!companyName || !mongoose.Types.ObjectId.isValid(brandId)) continue;
+
+        const taskTypeIds = Array.isArray(rmRow.taskTypeIds) ? rmRow.taskTypeIds : [];
+
+        upsertOps.push({
+
+            updateOne: {
+
+                filter: { companyName, userId: safeAmId, brandId },
+
+                update: {
+
+                    $set: {
+
+                        companyName,
+
+                        userId: safeAmId,
+
+                        brandId,
+
+                        brandName: (rmRow.brandName || '').toString(),
+
+                        taskTypeIds,
+
+                        updatedBy: actorId || ''
+
+                    },
+
+                    $setOnInsert: { createdBy: actorId || '' }
+
+                },
+
+                upsert: true
+
+            }
+
+        });
+
+    }
+
+    if (upsertOps.length > 0) {
+
+        await UserBrandTaskType.bulkWrite(upsertOps, { ordered: false });
+
+    }
+
+
+
+    // Step 3: recompute assignedBrandIds strictly from remaining mappings (taskTypeIds non-empty).
+
+    const finalMappings = await UserBrandTaskType.find({ userId: safeAmId })
+
+        .select('brandId taskTypeIds')
+
+        .lean();
+
+    const brandIds = Array.from(new Set(
+
+        (finalMappings || [])
+
+            .filter((m) => Array.isArray(m?.taskTypeIds) && m.taskTypeIds.length > 0)
+
+            .map((m) => toObjectIdString(m?.brandId))
+
+            .filter((id) => mongoose.Types.ObjectId.isValid(id))
+
+    ));
+
+    await User.updateOne(
+
+        { _id: safeAmId },
+
+        { $set: { assignedBrandIds: brandIds, updatedAt: new Date() } }
+
+    );
+
+};
+
+
+
+// Update AM Hierarchy (Admin/SBM only)
+
+exports.updateAmHierarchy = async (req, res) => {
+
+    try {
+
+        const requesterRole = normalizeRole(req.user?.role);
+
+        const requesterId = (req.user?.id || req.user?._id || '').toString();
+
+
+
+        if (requesterRole !== 'admin' && requesterRole !== 'super_admin' && requesterRole !== 'sbm') {
+
+            return res.status(403).json({ success: false, message: 'Access denied' });
+
+        }
+
+
+
+        const amId = String(req.params?.id || '').trim();
+
+        const nextRmId = String(req.body?.managerId || req.body?.rmId || '').trim();
+
+        if (!mongoose.Types.ObjectId.isValid(amId) || !mongoose.Types.ObjectId.isValid(nextRmId)) {
+
+            return res.status(400).json({ success: false, message: 'Valid AM id and RM managerId are required' });
+
+        }
+
+
+
+        const [targetAm, nextRm] = await Promise.all([
+
+            User.findById(amId).select('_id role managerId email').lean(),
+
+            User.findById(nextRmId).select('_id role managerId email').lean(),
+
+        ]);
+
+        if (!targetAm) {
+
+            return res.status(404).json({ success: false, message: 'AM user not found' });
+
+        }
+
+        if (normalizeRole(targetAm.role) !== 'am') {
+
+            return res.status(400).json({ success: false, message: 'Target user must be an AM' });
+
+        }
+
+        if (!nextRm) {
+
+            return res.status(404).json({ success: false, message: 'RM user not found' });
+
+        }
+
+        if (normalizeRole(nextRm.role) !== 'rm') {
+
+            return res.status(400).json({ success: false, message: 'managerId must be an RM user' });
+
+        }
+
+
+
+        // SBM can only move AMs under RMs they can manage.
+
+        if (requesterRole === 'sbm') {
+
+            const canManageTarget = await canManageUserByChain({ requesterRole, requesterId, targetUser: targetAm });
+
+            if (!canManageTarget) {
+
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+
+            }
+
+            const canAssignUnderManager = await canManageUserByChain({ requesterRole, requesterId, targetUser: nextRm });
+
+            if (!canAssignUnderManager) {
+
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+
+            }
+
+        }
+
+
+
+        if (!validateParentForRole({ childRole: 'am', parentRole: nextRm.role })) {
+
+            return res.status(400).json({ success: false, message: 'Invalid manager selection for role' });
+
+        }
+
+
+
+        const oldRmId = targetAm?.managerId ? targetAm.managerId.toString() : '';
+
+        const updatedUser = await User.findByIdAndUpdate(
+
+            amId,
+
+            { $set: { managerId: nextRmId, updatedAt: new Date() } },
+
+            { new: true, runValidators: true }
+
+        ).select('-password');
+
+
+
+        try {
+
+            await syncAmAssignmentsOnRmChange({ amId, oldRmId, newRmId: nextRmId, actorId: requesterId });
+
+        } catch (syncErr) {
+
+            console.error('syncAmAssignmentsOnRmChange failed:', syncErr && syncErr.message ? syncErr.message : syncErr);
+
+        }
+
+
+
+        const refreshedUser = await User.findById(amId).select('-password');
+
+
+
+        if (!updatedUser) {
+
+            return res.status(404).json({ success: false, message: 'User not found' });
+
+        }
+
+
+
+        try {
+
+            const obj = refreshedUser?.toObject ? refreshedUser.toObject() : refreshedUser;
+
+            if (obj) emitUserUpserted({ ...obj, id: obj._id || obj.id });
+
+        } catch (emitError) {
+
+            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+
+        }
+
+
+
+        return res.status(200).json({
+
+            success: true,
+
+            message: 'Hierarchy updated successfully',
+
+            user: refreshedUser || updatedUser
+
+        });
+
+    } catch (error) {
+
+        console.error('Error updating AM hierarchy:', error);
+
+        return res.status(500).json({ success: false, message: 'Error updating hierarchy', error: error.message });
+
+    }
 
 };
 

@@ -11,7 +11,7 @@ const companyBrandTaskTypeSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Brand',
     required: true,
-    index: true
+    // indexed via companyBrandTaskTypeSchema.index below
   },
   brandName: {
     type: String,
