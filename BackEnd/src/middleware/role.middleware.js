@@ -6,7 +6,11 @@ const requireRoles = (...roles) => {
     .forEach((r) => {
       allowedSet.add(r);
       if (r === 'admin') allowedSet.add('super_admin');
-      if (r === 'manager') allowedSet.add('md_manager');
+      if (r === 'manager') {
+        allowedSet.add('md_manager');
+        allowedSet.add('ob_manager');
+        allowedSet.add('all_manager');
+      }
     });
 
   const allowed = Array.from(allowedSet);
