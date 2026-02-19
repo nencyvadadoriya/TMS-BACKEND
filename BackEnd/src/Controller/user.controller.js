@@ -1729,7 +1729,7 @@ exports.getAllUsers = async (req, res) => {
                     { _id: requesterId },
                     {
                         companyName: companySafe ? { $regex: `^${companySafe}$`, $options: 'i' } : undefined,
-                        role: { $in: ['sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
+                        role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
                     }
                 ].filter(Boolean)
             };
@@ -2938,6 +2938,3 @@ exports.deleteUser = async (req, res) => {
     }
 
 };
-
-
-
