@@ -1757,16 +1757,12 @@ exports.getAllUsers = async (req, res) => {
             query = {
                 $or: [
                     { _id: requesterId },
-<<<<<<< HEAD
-                    sameCompanyAssistants
-                ]
-=======
+
                     {
                         companyName: companySafe ? { $regex: `^${companySafe}$`, $options: 'i' } : undefined,
                         role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
                     }
                 ].filter(Boolean)
->>>>>>> 4fb489182e540f0f466da29bc688b3cf076c4b46
             };
 
         } else {
