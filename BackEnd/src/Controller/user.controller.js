@@ -695,7 +695,15 @@ exports.registerUser = async (req, res) => {
 
             email: newUser.email,
 
-            role: newUser.role
+            role: newUser.role,
+
+            avatar: newUser.avatar,
+
+            companyName: newUser.companyName,
+
+            company: newUser.company,
+
+            managerId: newUser.managerId
 
         };
 
@@ -859,7 +867,15 @@ exports.loginUser = async (req, res) => {
 
                     email: user.email,
 
-                    role: user.role
+                    role: user.role,
+
+                    avatar: user.avatar,
+
+                    companyName: user.companyName,
+
+                    company: user.company,
+
+                    managerId: user.managerId
 
                 }
 
@@ -1351,9 +1367,15 @@ exports.getAllUsers = async (req, res) => {
 
             };
 
-        } else if (requesterRole === 'assistant') {
+        } else if (
+            requesterRole === 'assistant' ||
+            requesterRole === 'sub_assistance' ||
+            requesterRole === 'sub_assistence' ||
+            requesterRole === 'sub_assist' ||
+            requesterRole === 'sub_assistant'
+        ) {
 
-            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company);
+            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company); 
 
             if (!requesterCompany && requesterId) {
                 const doc = await User.findById(requesterId).select('companyName').lean();
@@ -1362,14 +1384,19 @@ exports.getAllUsers = async (req, res) => {
 
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
+            const sameCompanyAssistants = {
+                role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
+            };
+
+            if (companySafe) {
+                sameCompanyAssistants.companyName = { $regex: `^${companySafe}$`, $options: 'i' };
+            }
+
             query = {
                 $or: [
                     { _id: requesterId },
-                    {
-                        companyName: companySafe ? { $regex: `^${companySafe}$`, $options: 'i' } : undefined,
-                        role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
-                    }
-                ].filter(Boolean)
+                    sameCompanyAssistants
+                ]
             };
 
         } else {
