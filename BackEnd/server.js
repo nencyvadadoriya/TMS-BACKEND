@@ -1,57 +1,111 @@
 require("dotenv").config();
-const express = require('express');
-const morgan = require("morgan")
-require("./src/config/db.confing")
+const express = require("express");
+const morgan = require("morgan");
 const cors = require("cors");
-const http = require('http');
-const { initSocket } = require('./src/realtime/socket');
+const http = require("http");
+
+require("./src/config/db.confing");
+const { initSocket } = require("./src/realtime/socket");
+
 const app = express();
 const PORT = process.env.PORT || 8100;
-const IS_VERCEL = Boolean(process.env.VERCEL) && require.main !== module;
-app.use(express.urlencoded());
-app.use(express.json({ limit: '2mb' }))
-app.use(morgan('dev'))
+
+/* ===============================
+   GLOBAL ERROR HANDLING
+================================ */
+
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("❌ Unhandled Rejection:", err);
+  process.exit(1);
+});
+
+/* ===============================
+   MIDDLEWARE
+================================ */
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "2mb" }));
+app.use(morgan("dev"));
+
+/* ===============================
+   CORS CONFIG
+================================ */
 
 const allowedOrigins = new Set(
-    String(process.env.CORS_ORIGINS || '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
+  String(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
 );
 
 if (process.env.FRONTEND_URL) {
-    allowedOrigins.add(String(process.env.FRONTEND_URL).trim());
+  allowedOrigins.add(process.env.FRONTEND_URL.trim());
 }
 
-const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const localhostOriginPattern =
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
-const corsOptions = {
-    origin(origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.has(origin) || localhostOriginPattern.test(origin)) return callback(null, true);
-        return callback(new Error(`CORS blocked for origin: ${origin}`));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+
+      if (
+        allowedOrigins.has(origin) ||
+        localhostOriginPattern.test(origin)
+      ) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error(`CORS blocked for origin: ${origin}`)
+      );
     },
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
     credentials: true,
-    optionsSuccessStatus: 204
-};
+  })
+);
 
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
+/* ===============================
+   ROUTES
+================================ */
 
-app.use('/api', require('./src/routes/index'))
+app.use("/api", require("./src/routes/index"));
 
-if (require.main === module && !IS_VERCEL) {
-    const server = http.createServer(app);
-    initSocket(server);
-    server.listen(PORT,(error)=>{
-        if(error){
-            console.log(`server not started ${error}`)
-            return false;
-        }
-            console.log(`server is starting ${PORT}`)
-    })
-}
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    uptime: process.uptime(),
+    timestamp: new Date(),
+    environment: process.env.NODE_ENV || "development",
+  });
+});
+
+/* ===============================
+   SERVER START (ONLY ONCE)
+================================ */
+
+const server = http.createServer(app);
+initSocket(server);
+
+server.listen(PORT, "0.0.0.0", (err) => {
+  if (err) {
+    console.error("❌ Server failed to start:", err);
+    process.exit(1);
+  }
+
+  console.log("===================================");
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log("===================================");
+});
+
+/* ===============================
+   EXPORT
+================================ */
 
 module.exports = app;

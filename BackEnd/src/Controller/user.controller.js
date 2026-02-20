@@ -7,7 +7,6 @@ const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 
 
-
 const cloudinary = require('cloudinary').v2;
 
 
@@ -1637,7 +1636,7 @@ exports.changePassword = async (req, res) => {
 
 // Get all users
 
-exports.getAllUsers = async (req, res) => { 
+exports.getAllUsers = async (req, res) => {
 
     try {
 
@@ -1737,7 +1736,7 @@ exports.getAllUsers = async (req, res) => {
             requesterRole === 'sub_assistant'
         ) {
 
-            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company); 
+            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company);
 
             if (!requesterCompany && requesterId) {
                 const doc = await User.findById(requesterId).select('companyName').lean();
@@ -1757,12 +1756,8 @@ exports.getAllUsers = async (req, res) => {
             query = {
                 $or: [
                     { _id: requesterId },
-
-                    {
-                        companyName: companySafe ? { $regex: `^${companySafe}$`, $options: 'i' } : undefined,
-                        role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
-                    }
-                ].filter(Boolean)
+                    sameCompanyAssistants
+                ]
             };
 
         } else {
