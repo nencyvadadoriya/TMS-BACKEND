@@ -6,7 +6,7 @@ const companyTaskTypeSchema = new mongoose.Schema({
     ref: 'Company',
     required: false,
     default: null,
-    index: true
+    // indexed via companyTaskTypeSchema.index below
   },
   companyName: {
     type: String,

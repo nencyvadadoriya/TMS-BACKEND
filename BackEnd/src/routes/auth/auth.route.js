@@ -10,10 +10,12 @@ const {
     createUser,
     deleteUser,
     updateUser,
+    updateAmHierarchy,
     uploadProfileAvatar,
     removeProfileAvatar
 } = require('../../Controller/user.controller');
 const authMiddleware = require('../../middleware/auth.middleware');
+const { requireRoles } = require('../../middleware/role.middleware');
 const multer = require('multer');
 
 const router = express.Router();
@@ -40,6 +42,9 @@ router.get('/currentUser', authMiddleware, currentUser);
 router.post('/createUser', authMiddleware, createUser);
 router.delete('/deleteUser/:id', authMiddleware, deleteUser);
 router.put('/updateUser/:id', authMiddleware, updateUser);
+
+// Hierarchy Routes (Admin/SBM only)
+router.put('/am/:id/hierarchy', authMiddleware, requireRoles('admin', 'sbm'), updateAmHierarchy);
 
 router.post('/profile/avatar', authMiddleware, upload.single('avatar'), uploadProfileAvatar);
 router.delete('/profile/avatar', authMiddleware, removeProfileAvatar);
