@@ -54,4 +54,18 @@ if (require.main === module && !IS_VERCEL) {
     })
 }
 
+// For Render and other platforms
+if (process.env.NODE_ENV !== 'production' || require.main === module) {
+    const server = http.createServer(app);
+    initSocket(server);
+    server.listen(PORT, '0.0.0.0', (error) => {
+        if(error){
+            console.log(`server not started ${error}`)
+            return false;
+        }
+        console.log(`server is starting on port ${PORT}`)
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
+    })
+}
+
 module.exports = app;
