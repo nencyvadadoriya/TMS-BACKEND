@@ -1637,7 +1637,7 @@ exports.changePassword = async (req, res) => {
 
 // Get all users
 
-exports.getAllUsers = async (req, res) => { 
+exports.getAllUsers = async (req, res) => {
 
     try {
 
@@ -1737,7 +1737,7 @@ exports.getAllUsers = async (req, res) => {
             requesterRole === 'sub_assistant'
         ) {
 
-            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company); 
+            let requesterCompany = normalizeText(req.user?.companyName || req.user?.company);
 
             if (!requesterCompany && requesterId) {
                 const doc = await User.findById(requesterId).select('companyName').lean();
@@ -1757,16 +1757,8 @@ exports.getAllUsers = async (req, res) => {
             query = {
                 $or: [
                     { _id: requesterId },
-<<<<<<< HEAD
                     sameCompanyAssistants
                 ]
-=======
-                    {
-                        companyName: companySafe ? { $regex: `^${companySafe}$`, $options: 'i' } : undefined,
-                        role: { $in: ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'] }
-                    }
-                ].filter(Boolean)
->>>>>>> 4fb489182e540f0f466da29bc688b3cf076c4b46
             };
 
         } else {
