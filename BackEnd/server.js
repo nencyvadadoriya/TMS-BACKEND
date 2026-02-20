@@ -8,6 +8,21 @@ const { initSocket } = require('./src/realtime/socket');
 const app = express();
 const PORT = process.env.PORT || 8100;
 const IS_VERCEL = Boolean(process.env.VERCEL) && require.main !== module;
+
+// Add error handling for uncaught exceptions
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
+});
+
+console.log('Starting server...');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('PORT:', PORT);
 app.use(express.urlencoded());
 app.use(express.json({ limit: '2mb' }))
 app.use(morgan('dev'))
@@ -42,6 +57,17 @@ app.options(/.*/, cors(corsOptions));
 
 app.use('/api', require('./src/routes/index'))
 
+// Health check route
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'OK',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || 'development',
+        port: PORT
+    });
+});
+
 if (require.main === module && !IS_VERCEL) {
     const server = http.createServer(app);
     initSocket(server);
@@ -56,15 +82,19 @@ if (require.main === module && !IS_VERCEL) {
 
 // For Render and other platforms
 if (process.env.NODE_ENV !== 'production' || require.main === module) {
+    console.log('Initializing server...');
     const server = http.createServer(app);
+    console.log('Socket initialization...');
     initSocket(server);
+    console.log(`Attempting to listen on port ${PORT}...`);
     server.listen(PORT, '0.0.0.0', (error) => {
         if(error){
-            console.log(`server not started ${error}`)
-            return false;
+            console.error(`Server failed to start: ${error}`);
+            process.exit(1);
         }
-        console.log(`server is starting on port ${PORT}`)
-        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
+        console.log(`✅ Server successfully started on port ${PORT}`);
+        console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`✅ Health check available at: http://localhost:${PORT}/health`);
     })
 }
 
