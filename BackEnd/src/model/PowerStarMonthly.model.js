@@ -10,7 +10,8 @@ const PowerStarMonthlyRowSchema = new mongoose.Schema(
     avatar: { type: String, default: '' },
     churn: { type: [Number], default: [0, 0, 0, 0] },
     liveAssign: { type: [Number], default: [0, 0, 0, 0] },
-    hits: { type: [Number], default: [0, 0, 0, 0] }
+    hits: { type: [Number], default: [0, 0, 0, 0] },
+    freeze: { type: Boolean, default: false }
   },
   { _id: false }
 );
