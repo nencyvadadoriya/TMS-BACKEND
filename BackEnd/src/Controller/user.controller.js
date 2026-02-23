@@ -797,6 +797,32 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
         if (targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am') return false;
 
+        if (reqRole === 'md_manager' && targetRole === 'manager') {
+
+            try {
+
+                const [requester, targetDoc] = await Promise.all([
+
+                    User.findById(reqId).select('companyName company').lean().catch(() => null),
+
+                    User.findById(targetId).select('companyName company').lean().catch(() => null),
+
+                ]);
+
+                const requesterCompany = (requester?.companyName || requester?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+
+                const targetCompany = (targetDoc?.companyName || targetDoc?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+
+                if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
+
+            } catch {
+
+                // ignore
+
+            }
+
+        }
+
     }
 
 
@@ -1674,25 +1700,31 @@ exports.getAllUsers = async (req, res) => {
 
         } else if (requesterRole === 'md_manager') {
 
-            const managers = await User.find({ role: 'manager', managerId: requesterId }).select('_id').lean();
+            const requester = await User.findById(requesterId).select('companyName company').lean();
+
+            const requesterCompany = normalizeText(requester?.companyName || requester?.company);
+
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
+
+            const companyFilter = companySafe ? { companyName: { $regex: `^${companySafe}$`, $options: 'i' } } : {};
+
+            const [managers, mdManagers, obManagers, assistants] = await Promise.all([
+
+                User.find({ role: 'manager', ...companyFilter }).select('_id').lean(),
+
+                User.find({ role: 'md_manager', ...companyFilter }).select('_id').lean(),
+
+                User.find({ role: 'ob_manager', ...companyFilter }).select('_id').lean(),
+
+                User.find({ role: { $in: ['assistant', 'sub_assistance'] }, ...companyFilter }).select('_id').lean(),
+
+            ]);
 
             const managerIds = (managers || []).map(u => String(u._id));
 
-
-
-            const mdManagers = await User.find({ role: 'md_manager' }).select('_id').lean();
-
             const mdManagerIds = (mdManagers || []).map(u => String(u._id));
 
-
-
-            const obManagers = await User.find({ role: 'ob_manager' }).select('_id').lean();
-
             const obManagerIds = (obManagers || []).map(u => String(u._id));
-
-
-
-            const assistants = await User.find({ role: { $in: ['assistant', 'sub_assistance'] } }).select('_id').lean();
 
             const assistantIds = (assistants || []).map(u => String(u._id));
 
@@ -1703,7 +1735,6 @@ exports.getAllUsers = async (req, res) => {
                 .filter(Boolean)
 
                 .filter((v, idx, arr) => arr.indexOf(v) === idx);
-
 
 
             query = { _id: { $in: ids } };

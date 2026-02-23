@@ -41,7 +41,8 @@ const buildManagerRoster = async () => {
       avatar: normalizeText(u?.avatar || ''),
       churn: [0, 0, 0, 0],
       liveAssign: [0, 0, 0, 0],
-      hits: [0, 0, 0, 0]
+      hits: [0, 0, 0, 0],
+      freeze: false
     }))
     .filter((r) => Boolean(r.userId) || Boolean(r.email));
 };
@@ -53,25 +54,39 @@ const mergeSavedIntoRoster = (rosterRows, savedRows) => {
   const byUserId = new Map();
   const byEmail = new Map();
 
+  console.log('MERGE - SAVED ROWS IN:', savedRows);
+
   saved.forEach((r) => {
     const uid = normalizeText(r?.userId);
     const em = normalizeEmail(r?.email);
     const payload = {
       churn: normalizeWeekArr(r?.churn),
       liveAssign: normalizeWeekArr(r?.liveAssign),
-      hits: normalizeWeekArr(r?.hits)
+      hits: normalizeWeekArr(r?.hits),
+      freeze: Boolean(r?.freeze ?? false)
     };
+    console.log('MERGE - PAYLOAD FOR USER', uid || em, payload);
     if (uid) byUserId.set(uid, payload);
     if (em) byEmail.set(em, payload);
   });
 
-  return roster.map((r) => {
+  const result = roster.map((r) => {
     const uid = normalizeText(r?.userId);
     const em = normalizeEmail(r?.email);
     const match = (uid && byUserId.get(uid)) || (em && byEmail.get(em));
     if (!match) return r;
-    return { ...r, ...match };
+    // Important: preserve freeze from saved data, do not override with roster's freeze=false
+    const merged = {
+      ...r,
+      ...match,
+      freeze: match.freeze // always take freeze from saved data
+    };
+    console.log('MERGE - RESULT FOR', uid || em, merged);
+    return merged;
   });
+
+  console.log('MERGE - FINAL RESULT:', result);
+  return result;
 };
 
 exports.getMonthly = async (req, res) => {
@@ -106,13 +121,18 @@ exports.saveMonthly = async (req, res) => {
     const rowsIn = Array.isArray(req.body?.rows) ? req.body.rows : [];
     const updatedBy = req.user?.email ? String(req.user.email) : '';
 
+    console.log('REQ BODY ROWS:', rowsIn);
+
     const rows = rowsIn.map((r) => ({
       userId: normalizeText(r.userId),
       email: normalizeEmail(r.email),
       churn: normalizeWeekArr(r.churn),
       liveAssign: normalizeWeekArr(r.liveAssign),
-      hits: normalizeWeekArr(r.hits)
+      hits: normalizeWeekArr(r.hits),
+      freeze: Boolean(r?.freeze ?? false)
     }));
+
+    console.log('PROCESSED ROWS TO SAVE:', rows);
 
     await PowerStarMonthly.findOneAndUpdate(
       { monthKey, companyName },
@@ -122,17 +142,18 @@ exports.saveMonthly = async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // Return enriched payload
-    const rosterRows = await buildManagerRoster();
+    // Return directly from DB without merging roster (to preserve freeze state)
     const doc = await PowerStarMonthly.findOne({ monthKey, companyName }).lean();
-    const mergedRows = mergeSavedIntoRoster(rosterRows, doc?.rows);
+    const dbRows = doc?.rows || [];
+
+    console.log('DB ROWS AFTER SAVE (NO MERGE):', dbRows);
 
     return res.json({
       success: true,
       data: {
         companyName,
         monthKey,
-        rows: mergedRows,
+        rows: dbRows,
         updatedAt: doc?.updatedAt || null,
         updatedBy: doc?.updatedBy || ''
       },
