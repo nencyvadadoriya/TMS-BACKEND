@@ -369,8 +369,6 @@ exports.updateAmHierarchy = async (req, res) => {
 
         }
 
-
-
         const refreshedUser = await User.findById(amId).select('-password');
 
 
@@ -380,8 +378,6 @@ exports.updateAmHierarchy = async (req, res) => {
             return res.status(404).json({ success: false, message: 'User not found' });
 
         }
-
-
 
         try {
 

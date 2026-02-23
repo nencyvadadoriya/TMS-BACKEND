@@ -1,5 +1,9 @@
 const { Server } = require('socket.io');
 
+const ChatMessage = require('../model/ChatMessage.model');
+
+const { sendChatMessagePush } = require('../utils/pushNotifications.util');
+
 let io;
 
 function normalizeCompanyKey(value) {
@@ -10,6 +14,8 @@ function normalizeCompanyKey(value) {
 }
 
 function initSocket(server) {
+    console.log('Initializing Socket.io server...');
+    
     io = new Server(server, {
         cors: {
             origin: '*',
@@ -18,28 +24,180 @@ function initSocket(server) {
         },
     });
 
+    console.log('Socket.io server created');
+
     io.on('connection', (socket) => {
+        console.log('New socket connection established');
+        console.log('Socket ID:', socket.id);
+        
         const auth = socket.handshake.auth || {};
+        console.log('Auth data received:', auth);
 
         const userId = (auth.userId || '').toString();
         const role = (auth.role || '').toString().trim().toLowerCase();
         const companyName = (auth.companyName || '').toString();
 
+        console.log('User info:', { userId, role, companyName });
+
         const companyKey = normalizeCompanyKey(companyName);
 
         if (companyKey) {
             socket.join(`company:${companyKey}`);
+            console.log(`User joined company room: company:${companyKey}`);
         }
 
         if (userId) {
             socket.join(`user:${userId}`);
+            console.log(`User ${userId} joined their personal room: user:${userId}`);
+            console.log('Rooms now:', Array.from(socket.rooms || []));
         }
 
         if (role === 'admin' || role === 'super_admin') {
             socket.join('role:admin-like');
+            console.log(`Admin user joined admin room`);
         }
+
+        // Handle sending messages
+        socket.on('send_message', async (data, callback) => {
+            console.log('send_message event received:', data);
+            console.log('From socket:', socket.id);
+            console.log('User ID:', userId);
+            
+            try {
+                const { receiverId, content } = data;
+                const senderId = userId;
+
+                const senderName = (data?.senderName || auth.userName || 'Unknown').toString();
+                const senderEmail = (data?.senderEmail || auth.userEmail || 'unknown@example.com').toString();
+
+                console.log('Processing message:', { senderId, receiverId, content });
+
+                if (!receiverId || !content) {
+                    console.log('Invalid message data:', { receiverId, content });
+                    return callback({ error: 'Receiver ID and content are required' });
+                }
+
+                // Persist message
+                const doc = await ChatMessage.create({
+                    senderId,
+                    senderName,
+                    senderEmail,
+                    receiverId,
+                    content: content.trim(),
+                    read: false,
+                });
+
+                const message = {
+                    id: String(doc._id),
+                    senderId: doc.senderId,
+                    senderName: doc.senderName,
+                    senderEmail: doc.senderEmail,
+                    receiverId: doc.receiverId,
+                    content: doc.content,
+                    timestamp: doc.timestamp,
+                    read: doc.read,
+                };
+
+                console.log('Created message object:', message);
+
+                io.to(`user:${senderId}`).emit('chat_list_update', {
+                    otherUserId: receiverId,
+                    lastMessageAt: message.timestamp,
+                    unreadIncrement: 0,
+                });
+                console.log('Emitted chat_list_update to sender room', `user:${senderId}`);
+
+                io.to(`user:${receiverId}`).emit('chat_list_update', {
+                    otherUserId: senderId,
+                    lastMessageAt: message.timestamp,
+                    unreadIncrement: 1,
+                });
+                console.log('Emitted chat_list_update to receiver room', `user:${receiverId}`);
+
+                try {
+                    await sendChatMessagePush({
+                        toUserId: receiverId,
+                        fromName: message.senderName,
+                        messageText: message.content,
+                        senderId: senderId,
+                    });
+                } catch (e) {
+                    console.log('[push] chat push failed:', e?.message || e);
+                }
+
+                // Send to receiver if they're online
+                const receiverSockets = await io.in(`user:${receiverId}`).fetchSockets();
+                console.log(`Found ${receiverSockets.length} sockets for receiver ${receiverId}`);
+                
+                if (receiverSockets.length > 0) {
+                    console.log('Sending message to receiver...');
+                    io.to(`user:${receiverId}`).emit('new_message', message);
+                    console.log(`Message delivered to user ${receiverId}`);
+                } else {
+                    console.log(`User ${receiverId} is offline, message not delivered`);
+                }
+
+                // Send confirmation to sender
+                console.log('Sending confirmation to sender');
+                callback(message);
+
+            } catch (error) {
+                console.error('Error sending message:', error);
+                callback({ error: 'Failed to send message' });
+            }
+        });
+
+        // Handle getting chat history
+        socket.on('get_chat_history', async (data, callback) => {
+            try {
+                const { userId: peerUserId, page = 1, limit = 50 } = data;
+                const currentUserId = userId;
+
+                console.log('Fetching chat history:', { currentUserId, peerUserId, page, limit });
+
+                if (!peerUserId) {
+                    return callback({ error: 'userId is required' });
+                }
+
+                const pageNum = Math.max(1, Number(page) || 1);
+                const limitNum = Math.min(100, Math.max(1, Number(limit) || 50));
+                const skip = (pageNum - 1) * limitNum;
+
+                const docs = await ChatMessage.find({
+                    $or: [
+                        { senderId: currentUserId, receiverId: String(peerUserId) },
+                        { senderId: String(peerUserId), receiverId: currentUserId },
+                    ],
+                })
+                    .sort({ timestamp: -1 })
+                    .skip(skip)
+                    .limit(limitNum)
+                    .lean();
+
+                const messages = docs.map((d) => ({
+                    id: String(d._id),
+                    senderId: d.senderId,
+                    senderName: d.senderName,
+                    senderEmail: d.senderEmail,
+                    receiverId: d.receiverId,
+                    content: d.content,
+                    timestamp: d.timestamp,
+                    read: d.read,
+                }));
+
+                callback({ messages });
+            } catch (error) {
+                console.error('Error fetching chat history:', error);
+                callback({ error: 'Failed to fetch chat history' });
+            }
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('Socket disconnected:', socket.id, 'Reason:', reason);
+        });
     });
 
+    console.log('Socket.io event listeners set up');
     return io;
 }
 

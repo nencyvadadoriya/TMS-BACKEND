@@ -67,6 +67,64 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
   }
 };
 
+const sendChatMessagePush = async ({ toUserId, fromName, messageText, senderId }) => {
+  const uid = normalizeText(toUserId);
+  if (!uid) return;
+
+  const tokens = await DeviceToken.find({
+    userId: uid,
+    revoked: { $ne: true }
+  })
+    .select('token')
+    .lean();
+
+  const tokenList = (tokens || []).map((t) => (t?.token || '').toString().trim()).filter(Boolean);
+  if (tokenList.length === 0) {
+    console.log('[push] no tokens for userId:', uid);
+    return;
+  }
+
+  const title = normalizeText(fromName) ? `Message from ${normalizeText(fromName)}` : 'New message';
+  const body = normalizeText(messageText) || 'You have a new message';
+  const url = '/';
+
+  const payload = {
+    tokens: tokenList,
+    notification: {
+      title,
+      body
+    },
+    data: {
+      title,
+      body,
+      url,
+      kind: 'chat_message',
+      senderId: normalizeText(senderId)
+    }
+  };
+
+  const messaging = getMessaging();
+  if (!messaging) {
+    console.log('[push] skipped (firebase not configured) for userId:', uid);
+    return;
+  }
+
+  const resp = await messaging.sendEachForMulticast(payload);
+
+  const invalidTokens = [];
+  (resp.responses || []).forEach((r, idx) => {
+    if (r.success) return;
+    const code = r.error?.code || '';
+    if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+      invalidTokens.push(tokenList[idx]);
+    }
+  });
+
+  if (invalidTokens.length > 0) {
+    await DeviceToken.updateMany({ token: { $in: invalidTokens } }, { $set: { revoked: true, lastSeenAt: new Date() } });
+  }
+};
+
 const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }) => {
   const emailKey = normalizeEmail(toEmail);
   if (!emailKey) return;
@@ -126,5 +184,6 @@ const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }
 
 module.exports = {
   sendTaskAssignedPush,
-  sendTaskReminderPush
+  sendTaskReminderPush,
+  sendChatMessagePush
 };
