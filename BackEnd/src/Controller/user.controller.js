@@ -2601,10 +2601,6 @@ exports.createUser = async (req, res) => {
 
 };
 
-
-
-// Update User (Admin only)
-
 exports.updateUser = async (req, res) => {
 
     try {
@@ -2615,7 +2611,39 @@ exports.updateUser = async (req, res) => {
 
 
 
-        if (!isAdminLike(requesterRole) && !isHierarchyManager(requesterRole)) {
+        const requesterRoleKey = normalizeRoleKey(requesterRole);
+ 
+
+
+
+
+        const { id } = req.params;
+
+        const target = await User.findById(id).select('_id role managerId createdByEmail companyName company').lean();
+
+
+
+        if (!target) {
+
+            return res.status(404).json({ success: false, message: 'User not found' });
+
+        }
+
+
+
+        const normalizeCompanyKey = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '');
+
+        const isSpeedEcomTarget = normalizeCompanyKey(target?.companyName || target?.company || '') === 'speedecom';
+
+        const canAmEditRoleForSpeedEcom = requesterRoleKey === 'am' && isSpeedEcomTarget;
+
+        const canSbmEditRoleForSpeedEcom = requesterRoleKey === 'sbm' && isSpeedEcomTarget;
+
+        const canNonAdminEditSpeedEcomRole = canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom;
+
+
+
+        if (!isAdminLike(requesterRole) && !isHierarchyManager(requesterRole) && !canNonAdminEditSpeedEcomRole) {
 
             return res.status(403).json({
 
@@ -2626,14 +2654,14 @@ exports.updateUser = async (req, res) => {
             });
 
         }
+ 
 
+        const allowed = canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom
 
+            ? true
 
-        const { id } = req.params;
-
-        const target = await User.findById(id).select('_id role managerId createdByEmail companyName company').lean();
-
-        const allowed = await canManageUserByChain({ requesterRole, requesterId, targetUser: target });
+            : await canManageUserByChain({ requesterRole, requesterId, targetUser: target });
+ 
 
         if (!allowed) {
 
@@ -2655,7 +2683,30 @@ exports.updateUser = async (req, res) => {
 
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'role')) {
 
-            delete updates.role;
+            const requestedRole = normalizeRoleKey((updates || {}).role);
+
+            const allowedSpeedRoles = new Set(['sbm', 'rm', 'am']);
+
+            const canSetRole = (canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom)
+
+                ? allowedSpeedRoles.has(requestedRole)
+
+                : false;
+
+            if (!canSetRole) {
+
+                delete updates.role;
+
+            } else {
+
+                // AM special-case: only allow updating role; strip other fields for safety.
+                Object.keys(updates || {}).forEach((k) => {
+                    if (k !== 'role') delete updates[k];
+                });
+
+                updates.role = requestedRole;
+
+            }
 
         }
 
