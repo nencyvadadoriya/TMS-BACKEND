@@ -1337,11 +1337,28 @@ exports.getAllTasks = async (req, res) => {
 
                 .filter(Boolean);
 
+            const emailToAssignedRegex = (email) => {
+                const e = normalizeEmail(email);
+                if (!e) return null;
+                const safe = escapeRegex(e);
+                return new RegExp(`^${safe}(?:\\.deleted\\..+)?$`, 'i');
+            };
+
+            const assignedRegexes = Array.from(
+                new Set([...(assistantEmails || []), requesterEmail].filter(Boolean).map((e) => normalizeEmail(e)))
+            )
+                .map(emailToAssignedRegex)
+                .filter(Boolean);
+
 
 
             const or = [];
 
             if (assistantEmails.length > 0) or.push({ assignedTo: { $in: assistantEmails } });
+            if (assignedRegexes.length > 0) {
+                or.push({ assignedTo: { $in: assignedRegexes } });
+                or.push({ assignedBy: { $in: assignedRegexes } });
+            }
 
             if (requesterEmail) {
 
@@ -1350,6 +1367,12 @@ exports.getAllTasks = async (req, res) => {
                 or.push({ assignedTo: requesterEmail });
 
                 or.push({ assignedBy: requesterEmail });
+
+                const r = emailToAssignedRegex(requesterEmail);
+                if (r) {
+                    or.push({ assignedTo: r });
+                    or.push({ assignedBy: r });
+                }
 
             }
 
@@ -3412,13 +3435,29 @@ exports.getTaskReviews = async (req, res) => {
 
             const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
 
-            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            let requesterCompany = (req.user?.companyName || req.user?.company || '').toString().trim();
 
             if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
 
-                const doc = await User.findById(requesterId).select('companyName').lean();
+                const doc = await User.findById(requesterId).select('companyName company').lean();
 
-                requesterCompany = (doc?.companyName || '').toString().trim();
+                requesterCompany = (doc?.companyName || doc?.company || '').toString().trim();
+
+            }
+
+            if (!requesterCompany && requesterEmail) {
+
+                try {
+
+                    const doc = await User.findOne({ email: requesterEmail }).select('companyName company').lean();
+
+                    requesterCompany = (doc?.companyName || doc?.company || '').toString().trim();
+
+                } catch {
+
+                    // ignore
+
+                }
 
             }
 
@@ -3436,7 +3475,13 @@ exports.getTaskReviews = async (req, res) => {
 
                 ? await User.find({
 
-                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    $or: [
+
+                        { companyName: { $regex: `^${companySafe}$`, $options: 'i' } },
+
+                        { company: { $regex: `^${companySafe}$`, $options: 'i' } }
+
+                    ],
 
                     role: { $in: assistantRoles },
 
@@ -3476,13 +3521,29 @@ exports.getTaskReviews = async (req, res) => {
 
             const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
 
-            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            let requesterCompany = (req.user?.companyName || req.user?.company || '').toString().trim();
 
             if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
 
-                const doc = await User.findById(requesterId).select('companyName').lean();
+                const doc = await User.findById(requesterId).select('companyName company').lean();
 
-                requesterCompany = (doc?.companyName || '').toString().trim();
+                requesterCompany = (doc?.companyName || doc?.company || '').toString().trim();
+
+            }
+
+            if (!requesterCompany && requesterEmail) {
+
+                try {
+
+                    const doc = await User.findOne({ email: requesterEmail }).select('companyName company').lean();
+
+                    requesterCompany = (doc?.companyName || doc?.company || '').toString().trim();
+
+                } catch {
+
+                    // ignore
+
+                }
 
             }
 
@@ -3494,13 +3555,19 @@ exports.getTaskReviews = async (req, res) => {
 
 
 
-            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant'];
+            const assistantRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'manager', 'ob_manager'];
 
             const assistantDocs = companySafe
 
                 ? await User.find({
 
-                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    $or: [
+
+                        { companyName: { $regex: `^${companySafe}$`, $options: 'i' } },
+
+                        { company: { $regex: `^${companySafe}$`, $options: 'i' } }
+
+                    ],
 
                     role: { $in: assistantRoles },
 
