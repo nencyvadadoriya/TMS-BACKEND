@@ -454,11 +454,34 @@ const recordTaskDeleted = async ({
     });
 };
 
+const recordTaskCreated = async ({
+    req,
+    task
+}) => {
+    if (!task) return null;
+    const actor = getActorInfo(req);
+    const role = normaliseRole(actor.role) || 'user';
+    const message = `Task created by ${actor.name} (${role}) and assigned to ${task.assignedTo || 'Unknown'}`;
+
+    return createHistoryAndComment({
+        taskId: task._id,
+        actor,
+        action: 'task_created',
+        message,
+        oldStatus: null,
+        newStatus: task.status || 'pending',
+        note: '',
+        commentContent: '',
+        createComment: false
+    });
+};
+
 module.exports = {
     recordStatusChange,
     recordApprovalChange,
     recordTaskUpdate,
     recordTaskReassigned,
     recordTaskDeleted,
+    recordTaskCreated,
     formatStatus
 };

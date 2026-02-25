@@ -59,7 +59,9 @@ const {
 
     recordTaskReassigned,
 
-    recordTaskDeleted
+    recordTaskDeleted,
+
+    recordTaskCreated
 
 } = require('../utils/taskAudit.util');
 
@@ -1042,6 +1044,15 @@ exports.addTask = async (req, res) => {
 
 
         const savedTask = await task.save();
+
+
+
+        // Record task creation in history
+        try {
+            await recordTaskCreated({ req, task: savedTask });
+        } catch (auditError) {
+            console.error('Task creation audit failed:', auditError);
+        }
 
 
 
