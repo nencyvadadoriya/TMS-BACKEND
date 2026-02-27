@@ -6,6 +6,7 @@ const http = require("http");
 
 require("./src/config/db.confing");
 const { initSocket } = require("./src/realtime/socket");
+const { startPersonalTaskReminderScheduler } = require("./src/utils/personalTaskReminder.scheduler");
 
 const app = express();
 const PORT = process.env.PORT || 8100;
@@ -102,6 +103,9 @@ server.listen(PORT, "0.0.0.0", (err) => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log("===================================");
+  
+  // Start personal task reminder scheduler
+  startPersonalTaskReminderScheduler();
 });
 
 /* ===============================

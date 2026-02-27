@@ -74,12 +74,34 @@ exports.getMdImpexStrike = async (req, res) => {
 
     const currentEmail = normalizeEmail(req.user?.email);
     const currentRoleKey = normalizeRoleKey(req.user?.role);
+    
+    // Parse month filter from query (format: YYYY-MM)
+    const monthFilter = req.query?.month ? String(req.query.month).trim() : '';
+    let yearFilter = null;
+    let monthNumber = null;
+    
+    if (monthFilter && /^\d{4}-\d{2}$/.test(monthFilter)) {
+      const [yearStr, monthStr] = monthFilter.split('-');
+      yearFilter = parseInt(yearStr, 10);
+      monthNumber = parseInt(monthStr, 10);
+    }
+
+    // Build date filter for tasks if month is specified
+    const dateFilter = {};
+    if (yearFilter !== null && monthNumber !== null) {
+      const startOfMonth = new Date(yearFilter, monthNumber - 1, 1);
+      const endOfMonth = new Date(yearFilter, monthNumber, 0, 23, 59, 59, 999);
+      dateFilter.dueDate = { $gte: startOfMonth, $lte: endOfMonth };
+    }
 
     // 1) Fetch tasks that can potentially produce strikes.
-    const tasks = await Task.find({
+    const taskQuery = {
       isDeleted: { $ne: true },
-      companyName: { $regex: /^\s*md\s*impex\s*$/i }
-    }).lean();
+      companyName: { $regex: /^\s*md\s*impex\s*$/i },
+      ...dateFilter
+    };
+    
+    const tasks = await Task.find(taskQuery).lean();
 
     // Build scope: tasks that are eligible for strike tracking.
     // Rule: only tasks assigned BY an MD Manager (or All Manager) TO a Manager.
@@ -137,7 +159,16 @@ exports.getMdImpexStrike = async (req, res) => {
       .map((t) => String(t?._id || '').trim())
       .filter(Boolean);
 
-    // 4) Upsert Strike docs for candidates (so removal works and we can track history).
+    // Build date filter for removal history if month is specified
+    const removalHistoryDateFilter = {};
+    if (yearFilter !== null && monthNumber !== null) {
+      const startOfMonth = new Date(yearFilter, monthNumber - 1, 1);
+      const endOfMonth = new Date(yearFilter, monthNumber, 0, 23, 59, 59, 999);
+      removalHistoryDateFilter['removalHistory.removedAt'] = { 
+        $gte: startOfMonth, 
+        $lte: endOfMonth 
+      };
+    }
     if (candidateTaskIds.length > 0) {
       const existing = await Strike.find({ companyKey, taskId: { $in: candidateTaskIds } }).select('_id taskId').lean();
       const existingSet = new Set((existing || []).map((s) => String(s.taskId || '').trim()));

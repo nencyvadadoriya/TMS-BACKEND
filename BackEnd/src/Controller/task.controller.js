@@ -1326,19 +1326,43 @@ exports.getAllTasks = async (req, res) => {
 
 
 
-            const teamRoles = ['assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'sub-assistance', 'manager'];
+            const teamRoles = [
+                'assistant',
+                'assistance',
+                'assistence',
+                'sub_assistance',
+                'sub_assistence',
+                'sub_assist',
+                'sub_assistant',
+                'sub-assistance',
+                'sub-assistence',
+                'sub-assist',
+                'sub-assistant',
+                'manager',
+            ];
 
-            const assistantDocs = companySafe
+            const teamRoleRegex = /^(assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant|manager)$/i;
 
+            // Try to find team members by company + role
+            let assistantDocs = companySafe
                 ? await User.find({
-
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-
-                    role: { $in: teamRoles }
-
-                }).select('email').lean()
-
+                    role: { $regex: teamRoleRegex }
+                }).select('email role companyName').lean()
                 : [];
+
+            // DEBUG: Log what we found
+            console.log('OB Manager - Company filter:', companySafe, 'Found assistants:', assistantDocs.length);
+            console.log('Assistant emails found:', assistantDocs.map(u => u.email));
+
+            // Fallback: if no assistants found by company, try role-only query
+            if ((!assistantDocs || assistantDocs.length === 0) && requesterId) {
+                console.log('OB Manager - Fallback: searching all assistants by role only');
+                assistantDocs = await User.find({
+                    role: { $regex: teamRoleRegex }
+                }).select('email role companyName').lean();
+                console.log('OB Manager - Fallback found assistants:', assistantDocs.length);
+            }
 
 
 
@@ -1406,6 +1430,7 @@ exports.getAllTasks = async (req, res) => {
             }
 
             console.log('OB Manager tasks, count:', tasks.length);
+            console.log('OB Manager - Tasks assignedTo:', tasks.map(t => t.assignedTo).slice(0, 10));
 
         } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
 
@@ -1421,11 +1446,26 @@ exports.getAllTasks = async (req, res) => {
             const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
-            const teamRoles = ['manager', 'assistant', 'sub_assistance', 'sub_assistence', 'sub_assist', 'sub_assistant', 'sub-assistance'];
+            const teamRoles = [
+                'manager',
+                'assistant',
+                'assistance',
+                'assistence',
+                'sub_assistance',
+                'sub_assistence',
+                'sub_assist',
+                'sub_assistant',
+                'sub-assistance',
+                'sub-assistence',
+                'sub-assist',
+                'sub-assistant',
+            ];
+
+            const teamRoleRegex = /^(manager|assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant)$/i;
             const teamDocs = companySafe
                 ? await User.find({
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-                    role: { $in: teamRoles }
+                    role: { $regex: teamRoleRegex }
                 }).select('email').lean()
                 : [];
 

@@ -6,7 +6,7 @@ const { requireRoles } = require('../middleware/role.middleware');
 
 const controller = require('../Controller/powerStarMonthly.controller');
 
-router.get('/', auth, requireRoles('manager'), controller.getMonthly);
-router.put('/', auth, requireRoles('manager'), controller.saveMonthly);
+router.get('/', auth, requireRoles('manager', 'admin', 'super_admin'), controller.getMonthly);
+router.put('/', auth, requireRoles('manager', 'admin', 'super_admin'), controller.saveMonthly);
 
 module.exports = router;

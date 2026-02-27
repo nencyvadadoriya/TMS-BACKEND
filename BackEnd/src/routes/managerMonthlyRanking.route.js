@@ -6,7 +6,7 @@ const { requireRoles } = require('../middleware/role.middleware');
 
 const controller = require('../Controller/managerMonthlyRanking.controller');
 
-router.get('/', auth, requireRoles('manager'), controller.getMonthlyRanking);
-router.put('/', auth, requireRoles('manager'), controller.saveMonthlyRanking);
+router.get('/', auth, requireRoles('manager', 'admin', 'super_admin'), controller.getMonthlyRanking);
+router.put('/', auth, requireRoles('manager', 'admin', 'super_admin'), controller.saveMonthlyRanking);
 
 module.exports = router;
