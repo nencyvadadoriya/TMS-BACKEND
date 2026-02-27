@@ -2714,13 +2714,17 @@ exports.updateUser = async (req, res) => {
 
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'managerId')) {
 
-            const targetRole = normalizeRole(target?.role);
+            const effectiveTargetRole = normalizeRoleKey(
+                Object.prototype.hasOwnProperty.call(updates || {}, 'role')
+                    ? (updates || {}).role
+                    : target?.role
+            );
 
             const nextManagerId = String((updates || {}).managerId || '').trim();
 
 
 
-            if (!ROLE_PARENTS[targetRole]) {
+            if (!ROLE_PARENTS[effectiveTargetRole]) {
 
                 delete updates.managerId;
 
@@ -2740,7 +2744,7 @@ exports.updateUser = async (req, res) => {
 
                     delete updates.managerId;
 
-                } else if (!validateParentForRole({ childRole: targetRole, parentRole: managerUser.role })) {
+                } else if (!validateParentForRole({ childRole: effectiveTargetRole, parentRole: managerUser.role })) {
 
                     delete updates.managerId;
 
