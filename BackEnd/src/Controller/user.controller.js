@@ -1692,7 +1692,7 @@ exports.getAllUsers = async (req, res) => {
 
 
 
-        if (['super_admin', 'admin', 'sbm', 'rm', 'am'].includes(requesterRole)) {
+        if (['super_admin', 'admin', 'sbm', 'rm', 'am', 'troubleshoot_manager'].includes(requesterRole)) {
 
             query = {};
 

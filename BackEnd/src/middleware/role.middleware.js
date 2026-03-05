@@ -9,6 +9,7 @@ const requireRoles = (...roles) => {
       if (r === 'manager') {
         allowedSet.add('md_manager');
         allowedSet.add('ob_manager');
+        allowedSet.add('troubleshoot_manager');
         allowedSet.add('all_manager');
       }
     });
