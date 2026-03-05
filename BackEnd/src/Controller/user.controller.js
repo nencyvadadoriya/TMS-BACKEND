@@ -1,4 +1,5 @@
 const User = require('../model/user.model');
+const MdImpexAccess = require('../model/MdImpexAccess.model');
 
 const mongoose = require('mongoose');
 
@@ -55,9 +56,23 @@ const ROLE_PARENTS = {
 
     am: ['rm'],
 
+    troubleshoot_manager: ['admin', 'md_manager'],
+
 };
 
-
+// Display names for roles (stored in DB instead of keys)
+const ROLE_DISPLAY_NAMES = {
+    admin: 'Admin',
+    md_manager: 'MD Manager',
+    ob_manager: 'OB Manager',
+    manager: 'Manager',
+    assistant: 'Assistant',
+    sub_assistance: 'Sub Assistance',
+    sbm: 'SBM',
+    rm: 'RM',
+    am: 'AM',
+    troubleshoot_manager: 'Troubleshoot Manager',
+};
 
 const toObjectIdString = (value) => {
 
@@ -793,7 +808,8 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
         if (targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am') return false;
 
-        if (reqRole === 'md_manager' && targetRole === 'manager') {
+        // Allow MD Manager to manage manager and troubleshoot_manager in same company
+        if ((targetRole === 'manager' || targetRole === 'troubleshoot_manager') && reqRole === 'md_manager') {
 
             try {
 
@@ -1702,38 +1718,27 @@ exports.getAllUsers = async (req, res) => {
 
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
-            const companyFilter = companySafe ? { companyName: { $regex: `^${companySafe}$`, $options: 'i' } } : {};
+            if (companySafe) {
 
-            const [managers, mdManagers, obManagers, assistants] = await Promise.all([
+                query = {
 
-                User.find({ role: 'manager', ...companyFilter }).select('_id').lean(),
+                    $or: [
 
-                User.find({ role: 'md_manager', ...companyFilter }).select('_id').lean(),
+                        { companyName: { $regex: `^${companySafe}$`, $options: 'i' } },
 
-                User.find({ role: 'ob_manager', ...companyFilter }).select('_id').lean(),
+                        { company: { $regex: `^${companySafe}$`, $options: 'i' } },
 
-                User.find({ role: { $in: ['assistant', 'sub_assistance'] }, ...companyFilter }).select('_id').lean(),
+                        { _id: requesterId }
 
-            ]);
+                    ]
 
-            const managerIds = (managers || []).map(u => String(u._id));
+                };
 
-            const mdManagerIds = (mdManagers || []).map(u => String(u._id));
+            } else {
 
-            const obManagerIds = (obManagers || []).map(u => String(u._id));
+                query = { _id: requesterId };
 
-            const assistantIds = (assistants || []).map(u => String(u._id));
-
-
-
-            const ids = [requesterId, ...mdManagerIds, ...managerIds, ...obManagerIds, ...assistantIds]
-
-                .filter(Boolean)
-
-                .filter((v, idx, arr) => arr.indexOf(v) === idx);
-
-
-            query = { _id: { $in: ids } };
+            }
 
         } else if (requesterRole === 'manager') {
 
@@ -2191,15 +2196,11 @@ exports.createUser = async (req, res) => {
 
 
 
-        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
+        if (isMdManager) {
 
-            return res.status(403).json({
+            // MD Manager can create any role for MD Impex users - no restrictions
 
-                success: false,
-
-                message: 'MD Managers can only create manager, assistant or sub assistance users'
-
-            });
+            // All roles are allowed including custom roles
 
         }
 
@@ -2457,7 +2458,7 @@ exports.createUser = async (req, res) => {
 
             password: hashedPassword,
 
-            role: normalizedRole,
+            role: ROLE_DISPLAY_NAMES[normalizedRole] || normalizedRole,
 
             managerId: computedManagerId,
 
@@ -2704,7 +2705,7 @@ exports.updateUser = async (req, res) => {
                     if (k !== 'role') delete updates[k];
                 });
 
-                updates.role = requestedRole;
+                updates.role = ROLE_DISPLAY_NAMES[requestedRole] || requestedRole;
 
             }
 

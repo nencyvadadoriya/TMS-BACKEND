@@ -3,7 +3,7 @@ const UserPermission = require('../model/UserPermission.model');
 const User = require('../model/user.model');
 const Role = require('../model/Role.model');
 
-const permissionEnum = new Set(['allow', 'deny' ]);
+const permissionEnum = new Set(['allow', 'deny']);
 
 const ensureDefaultRoles = async () => {
     const defaults = [
@@ -12,6 +12,7 @@ const ensureDefaultRoles = async () => {
         { key: 'md_manager', name: 'MD Manager' },
         { key: 'ob_manager', name: 'OB Manager' },
         { key: 'manager', name: 'Manager' },
+        { key: 'troubleshoot_manager', name: 'Troubleshoot Manager' },
         { key: 'sbm', name: 'SBM' },
         { key: 'rm', name: 'RM' },
         { key: 'am', name: 'AM' },
@@ -37,12 +38,12 @@ const ensureDefaultModules = async () => {
     await ensureDefaultRoles();
 
     const defaults = [
-        { moduleId: 'tasks_page', name: 'All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
-        { moduleId: 'calendar_page', name: 'Calendar', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'tasks_page', name: 'All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'calendar_page', name: 'Calendar', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'reviews_page', name: 'Reviews', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'other_work_page', name: 'Other Work', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'user_management', name: 'User Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', sbm: 'allow', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'brands_page', name: 'Brands', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'brands_page', name: 'Brands', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'company_brand_task_type', name: 'Company Brand Task Type', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'company_task_type', name: 'Company Task Type', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'assign_page', name: 'Assign Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
@@ -55,17 +56,19 @@ const ensureDefaultModules = async () => {
         { moduleId: 'company_delete', name: 'Company Delete', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'brand_bulk_add', name: 'Brand Bulk Add', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'task_type_bulk_add', name: 'Task Type Bulk Add', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'create_task', name: 'Create Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'assign_task', name: 'Assign Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'create_task', name: 'Create Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'assign_task', name: 'Assign Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'team', manager: 'own', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
         { moduleId: 'team_page', name: 'Team', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'reports_analytics', name: 'Reports / Analytics', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'deny', manager: 'team', assistant: 'deny', sub_assistance: 'deny' } },
         { moduleId: 'access_management', name: 'Access Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
-        { moduleId: 'profile_page', name: 'Profile', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'profile_page', name: 'Profile', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
+        { moduleId: 'strike_page', name: 'Strike Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'deny', rm: 'deny', am: 'deny', ar: 'deny', assistant: 'deny', sub_assistance: 'deny' } },
+        { moduleId: 'personal_tasks_page', name: 'Personal Tasks Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'allow', sub_assistance: 'allow' } },
     ];
 
     try {
@@ -189,7 +192,7 @@ const requireModulePermission = (moduleId) => {
         try {
             const role = String(req.user?.role || '').toLowerCase();
             if (role === 'admin' || role === 'super_admin') return next();
-            if ((role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar') && (moduleId === 'create_task' || moduleId === 'assign_task')) {
+            if ((role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar' || role === 'troubleshoot_manager') && (moduleId === 'create_task' || moduleId === 'assign_task')) {
                 return next();
             }
 
@@ -217,7 +220,7 @@ const requireAnyModulePermission = (moduleIds) => {
         try {
             const role = String(req.user?.role || '').toLowerCase();
             if (role === 'admin' || role === 'super_admin') return next();
-            if (role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar') {
+            if (role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar' || role === 'troubleshoot_manager') {
                 if (ids.includes('create_task') || ids.includes('assign_task')) {
                     return next();
                 }
