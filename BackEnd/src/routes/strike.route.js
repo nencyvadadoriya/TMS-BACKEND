@@ -6,7 +6,7 @@ const { requireRoles } = require('../middleware/role.middleware');
 
 const strikeController = require('../Controller/strike.controller');
 
-router.get('/md-impex', auth, requireRoles('manager'), strikeController.getMdImpexStrike);
-router.patch('/:id/remove', auth, requireRoles('manager'), strikeController.removeStrike);
+router.get('/md-impex', auth, requireRoles('manager', 'troubleshoot_manager'), strikeController.getMdImpexStrike);
+router.patch('/:id/remove', auth, requireRoles('md_manager', 'troubleshoot_manager', 'admin'), strikeController.removeStrike);
 
 module.exports = router;

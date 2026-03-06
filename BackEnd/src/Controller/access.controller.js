@@ -306,8 +306,50 @@ exports.setUserPermission = async (req, res) => {
         if (!allowed) return res.status(403).json({ success: false, message: 'Access denied' });
 
         await ensureDefaultModules();
-        const exists = await AccessModule.findOne({ moduleId }).select('_id');
-        if (!exists) return res.status(404).json({ success: false, message: 'Module not found' });
+        let moduleDoc = await AccessModule.findOne({ moduleId }).select('_id name defaults');
+        
+        // Auto-create module if it doesn't exist (for dynamically added frontend modules)
+        if (!moduleDoc) {
+            const moduleName = moduleId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const defaults = {
+                super_admin: 'allow',
+                admin: 'allow',
+                md_manager: 'allow',
+                ob_manager: 'allow',
+                manager: 'allow',
+                sbm: 'allow',
+                rm: 'allow',
+                am: 'allow',
+                ar: 'allow',
+                assistant: 'allow',
+                sub_assistance: 'allow'
+            };
+            
+            // Set specific defaults based on module type
+            if (moduleId === 'strike_page') {
+                defaults.ob_manager = 'deny';
+                defaults.sbm = 'deny';
+                defaults.rm = 'deny';
+                defaults.am = 'deny';
+                defaults.ar = 'deny';
+                defaults.assistant = 'deny';
+                defaults.sub_assistance = 'deny';
+            }
+            
+            try {
+                moduleDoc = await AccessModule.create({
+                    moduleId,
+                    name: moduleName,
+                    defaults
+                });
+            } catch (createErr) {
+                // If creation fails (e.g., race condition), try to find again
+                moduleDoc = await AccessModule.findOne({ moduleId }).select('_id');
+                if (!moduleDoc) {
+                    return res.status(500).json({ success: false, message: 'Failed to create module' });
+                }
+            }
+        }
 
         const doc = await UserPermission.findOneAndUpdate(
             { userId, moduleId },

@@ -17,5 +17,6 @@ route.use("/reminders", require("./reminder.route"))
 route.use("/strike", require("./strike.route"))
 route.use("/manager-monthly-rankings", require("./managerMonthlyRanking.route"))
 route.use("/power-star-monthly", require("./powerStarMonthly.route"))
+route.use("/md-impex-access", require("./mdImpexAccess.route"))
 
 module.exports = route;

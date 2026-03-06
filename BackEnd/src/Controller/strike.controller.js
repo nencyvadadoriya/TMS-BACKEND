@@ -137,12 +137,12 @@ exports.getMdImpexStrike = async (req, res) => {
       const assignerRole = roleByEmail.get(assignedBy) || '';
       const assigneeRole = roleByEmail.get(assignedTo) || '';
 
-      const assignerIsMd = assignerRole === 'md_manager' || assignerRole === 'all_manager';
+      const assignerIsMd = assignerRole === 'md_manager' || assignerRole === 'troubleshoot_manager' || assignerRole === 'all_manager';
       const assigneeIsManager = assigneeRole === 'manager';
 
       if (!assignerIsMd || !assigneeIsManager) return false;
 
-      if ((currentRoleKey === 'md_manager' || currentRoleKey === 'all_manager') && currentEmail) {
+      if (currentRoleKey === 'md_manager' && currentEmail) {
         return assignedBy === currentEmail;
       }
 

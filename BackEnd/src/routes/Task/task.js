@@ -16,7 +16,7 @@ const {
     approveTask,
     getTaskReviews,
     submitTaskReview,
-} =  require("../../Controller/task.controller");
+} = require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
 const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
 const { requireModulePermission } = require("../../middleware/permission.middleware");
@@ -46,13 +46,13 @@ const allowDeleteTaskCreatorOrPermission = async (req, res, next) => {
 };
 
 const router = express.Router();
-router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar'), requireModulePermission('create_task'), addTask);
+router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar', 'troubleshoot_manager'), requireModulePermission('create_task'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);
 router.put('/md-impex/reassign/:id', authMiddleware, requireRoles('assistant', 'ob_manager', 'admin', 'super_admin'), mdImpexReassignTask);
 router.delete("/deleteTask/:id", authMiddleware, allowDeleteTaskCreatorOrPermission, deleteTask);
-router.put('/tasks/:id/approve', authMiddleware, approveTask) 
+router.put('/tasks/:id/approve', authMiddleware, approveTask)
 
 // Task reviews
 router.get('/reviews', authMiddleware, getTaskReviews);

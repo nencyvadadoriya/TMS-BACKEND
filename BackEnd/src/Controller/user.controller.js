@@ -1,4 +1,5 @@
 const User = require('../model/user.model');
+const MdImpexAccess = require('../model/MdImpexAccess.model');
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
@@ -30,6 +31,24 @@ const ROLE_PARENTS = {
     am: ['rm'],
     sales_manager: ['sbm', 'admin', 'super_admin'],
     sales_man: ['sales_manager', 'admin', 'super_admin'],
+    troubleshoot_manager: ['admin', 'md_manager'],
+};
+
+
+
+
+// Display names for roles (stored in DB instead of keys)
+const ROLE_DISPLAY_NAMES = {
+    admin: 'Admin',
+    md_manager: 'MD Manager',
+    ob_manager: 'OB Manager',
+    manager: 'Manager',
+    assistant: 'Assistant',
+    sub_assistance: 'Sub Assistance',
+    sbm: 'SBM',
+    rm: 'RM',
+    am: 'AM',
+    troubleshoot_manager: 'Troubleshoot Manager',
 };
 
 const toObjectIdString = (value) => {
@@ -403,7 +422,10 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
         if (targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'md_manager') return false;
         if (targetRole === 'ob_manager') return false;
         if (targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am') return false;
-        if (reqRole === 'md_manager' && targetRole === 'manager') {
+
+        // Allow MD Manager to manage manager and troubleshoot_manager in same company
+        if ((targetRole === 'manager' || targetRole === 'troubleshoot_manager') && reqRole === 'md_manager') {
+
             try {
                 const [requester, targetDoc] = await Promise.all([
                     User.findById(reqId).select('companyName company').lean().catch(() => null),
@@ -872,7 +894,10 @@ exports.getAllUsers = async (req, res) => {
 
         let query = {};
 
-        if (['super_admin', 'admin', 'sbm', 'rm', 'am'].includes(requesterRole)) {
+
+
+        if (['super_admin', 'admin', 'sbm', 'rm', 'am', 'troubleshoot_manager'].includes(requesterRole)) {
+
             query = {};
         } else if (requesterRole === 'sales_manager') {
             const requester = await User.findById(requesterId)
@@ -936,6 +961,28 @@ exports.getAllUsers = async (req, res) => {
                 .filter((v, idx, arr) => arr.indexOf(v) === idx);
 
             query = { _id: { $in: ids } };
+            if (companySafe) {
+
+                query = {
+
+                    $or: [
+
+                        { companyName: { $regex: `^${companySafe}$`, $options: 'i' } },
+
+                        { company: { $regex: `^${companySafe}$`, $options: 'i' } },
+
+                        { _id: requesterId }
+
+                    ]
+
+                };
+
+            } else {
+
+                query = { _id: requesterId };
+
+            }
+
         } else if (requesterRole === 'manager') {
             query = {
                 $or: [
@@ -1173,11 +1220,14 @@ exports.createUser = async (req, res) => {
             });
         }
 
-        if (isMdManager && normalizedRole !== 'manager' && normalizedRole !== 'assistant' && normalizedRole !== 'sub_assistance') {
-            return res.status(403).json({
-                success: false,
-                message: 'MD Managers can only create manager, assistant or sub assistance users'
-            });
+
+
+        if (isMdManager) {
+
+            // MD Manager can create any role for MD Impex users - no restrictions
+
+            // All roles are allowed including custom roles
+
         }
 
         if (isSbm && normalizedRole !== 'rm' && normalizedRole !== 'am' && normalizedRole !== 'sales_manager' && normalizedRole !== 'sales_man') {
@@ -1311,7 +1361,9 @@ exports.createUser = async (req, res) => {
             name,
             email: safeEmail,
             password: hashedPassword,
-            role: normalizedRole,
+
+            role: ROLE_DISPLAY_NAMES[normalizedRole] || normalizedRole,
+
             managerId: computedManagerId,
             // If a manager creates an assistant, only assign what the manager explicitly selects
             assignedBrandIds: safeAssignedBrandIds,
@@ -1444,7 +1496,9 @@ exports.updateUser = async (req, res) => {
                 Object.keys(updates || {}).forEach((k) => {
                     if (k !== 'role') delete updates[k];
                 });
-                updates.role = requestedRole;
+
+                updates.role = ROLE_DISPLAY_NAMES[requestedRole] || requestedRole;
+
             }
         }
 
