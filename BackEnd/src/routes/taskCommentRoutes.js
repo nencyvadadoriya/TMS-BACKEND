@@ -12,7 +12,7 @@ router.post('/addComment/:taskId', authMiddleware, async (req, res) => {
         const { taskId } = req.params;
 
         // Check if task exists
-        const task = await Task.findById(taskId);
+        const task = await Task.findById(taskId).lean();
         if (!task) {
             return res.status(404).json({
                 success: false,
@@ -32,14 +32,13 @@ router.post('/addComment/:taskId', authMiddleware, async (req, res) => {
 
         await comment.save();
 
-        // Add comment to task
-        task.comments = task.comments || [];
-        task.comments.push(comment._id);
-        await task.save();
+        await Task.findByIdAndUpdate(taskId, {
+            $addToSet: { comments: comment._id },
+            updatedAt: Date.now()
+        });
 
         try {
-            const taskDoc = await Task.findById(taskId).lean();
-            emitCommentAdded({ task: taskDoc, comment });
+            emitCommentAdded({ task, comment });
         } catch (e) {
             console.error('Failed to emit comment:added:', e && e.message ? e.message : e);
         }
