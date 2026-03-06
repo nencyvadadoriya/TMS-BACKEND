@@ -355,17 +355,17 @@ exports.applyTemplateToUser = async (req, res) => {
                 return !existingSet?.has(moduleId);
             })
             .map((m) => {
-            const moduleId = String(m.moduleId);
-            const val = getDefaultForRole(m.defaults, templateRole) ? String(getDefaultForRole(m.defaults, templateRole)) : 'deny';
-            const safeVal = permissionEnum.has(val) ? val : 'deny';
-            return {
-                updateOne: {
-                    filter: { userId, moduleId },
-                    update: { $set: { value: safeVal } },
-                    upsert: true,
-                }
-            };
-        });
+                const moduleId = String(m.moduleId);
+                const val = getDefaultForRole(m.defaults, templateRole) ? String(getDefaultForRole(m.defaults, templateRole)) : 'deny';
+                const safeVal = permissionEnum.has(val) ? val : 'deny';
+                return {
+                    updateOne: {
+                        filter: { userId, moduleId },
+                        update: { $set: { value: safeVal } },
+                        upsert: true,
+                    }
+                };
+            });
 
         if (ops.length > 0) {
             await UserPermission.bulkWrite(ops, { ordered: false });
