@@ -318,6 +318,7 @@ exports.setUserPermission = async (req, res) => {
                 ob_manager: 'allow',
                 manager: 'allow',
                 sbm: 'allow',
+                troubleshoot_manager: 'allow',
                 rm: 'allow',
                 am: 'allow',
                 ar: 'allow',
@@ -334,6 +335,7 @@ exports.setUserPermission = async (req, res) => {
                 defaults.ar = 'deny';
                 defaults.assistant = 'deny';
                 defaults.sub_assistance = 'deny';
+                // defaults.troubleshoot_manager is 'allow' from base overrides
             }
             
             try {
