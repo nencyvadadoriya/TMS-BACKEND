@@ -147,6 +147,12 @@ const taskSchema = new mongoose.Schema({
       type: String,
       default: null
     }
+  },
+  latestComment: {
+    content: { type: String, default: null },
+    userName: { type: String, default: null },
+    userEmail: { type: String, default: null },
+    createdAt: { type: Date, default: null }
   }
 }, {
   timestamps: true,

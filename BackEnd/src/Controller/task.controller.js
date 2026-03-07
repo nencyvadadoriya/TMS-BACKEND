@@ -1,5 +1,5 @@
 
-    // controllers/task.controller.js
+// controllers/task.controller.js
 
 const mongoose = require('mongoose');
 
@@ -812,7 +812,7 @@ async function userCanAccessTask(task, user) {
 
     if (requesterRole === 'manager' || requesterRole === 'md_manager') {
         const scope = await resolveTaskScopeEmails(user);
-        
+
         // Also check if task was assigned by an OB Manager from the same company
         const requesterId = safeObjectIdString(user?.id || user?._id || user?.userId);
         let requesterCompany = normalizeText(user?.companyName || user?.company);
@@ -829,14 +829,14 @@ async function userCanAccessTask(task, user) {
         if (obManagerEmail && requesterCompany) {
             const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const companySafe = escapeRegex(requesterCompany);
-            
+
             try {
                 const obManagerDoc = await User.findOne({
                     email: obManagerEmail,
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
                     role: { $regex: /^ob_manager$/i }
                 }).select('_id').lean();
-                
+
                 if (obManagerDoc && (assignedToEmail === requesterEmail || assignedByEmail === requesterEmail)) {
                     return true;
                 }
@@ -844,7 +844,7 @@ async function userCanAccessTask(task, user) {
                 // ignore
             }
         }
-        
+
         return scope.has(assignedToEmail) || scope.has(assignedByEmail);
     }
 
@@ -1094,7 +1094,7 @@ exports.addTask = async (req, res) => {
             try {
                 const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
                 const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
-                
+
                 const toName = assignedToUser?.name || 'User';
                 const assignedByName = assignedByUser?.name || req.user?.name || 'User';
 
@@ -1809,11 +1809,16 @@ exports.addTaskComment = async (req, res) => {
 
 
         await Task.findByIdAndUpdate(taskId, {
-
             $addToSet: { comments: comment._id },
-
+            $set: {
+                latestComment: {
+                    content: comment.content,
+                    userName: comment.userName,
+                    userEmail: comment.userEmail,
+                    createdAt: comment.createdAt
+                }
+            },
             updatedAt: Date.now()
-
         });
 
 
@@ -2035,6 +2040,19 @@ exports.deleteTaskComment = async (req, res) => {
         }
 
 
+
+        // Recalculate latestComment
+        const remainingComments = await Comment.find({ taskId }).sort({ createdAt: -1 }).limit(1).lean();
+        const latest = remainingComments.length > 0 ? {
+            content: remainingComments[0].content,
+            userName: remainingComments[0].userName,
+            userEmail: remainingComments[0].userEmail,
+            createdAt: remainingComments[0].createdAt
+        } : null;
+
+        await Task.findByIdAndUpdate(taskId, {
+            $set: { latestComment: latest }
+        });
 
         return res.json({ success: true, message: 'Comment deleted successfully' });
 
@@ -2541,11 +2559,11 @@ exports.updateTask = async (req, res) => {
         const isSpeedEcomTask = taskCompanyKey === SPEED_E_COM_COMPANY_KEY;
         const isMdImpexTask = taskCompanyKey === MD_IMPEX_COMPANY_KEY;
 
-        console.log('Task Debug:', { 
-            id, 
-            taskCompanyKey, 
-            isSpeedEcomTask, 
-            requesterEmail, 
+        console.log('Task Debug:', {
+            id,
+            taskCompanyKey,
+            isSpeedEcomTask,
+            requesterEmail,
             assignedTo: previousTask.assignedTo,
             isAssignee: requesterEmail && normalizeEmail(previousTask.assignedTo) === requesterEmail
         });
@@ -2663,17 +2681,17 @@ exports.updateTask = async (req, res) => {
 
         const hasApprovalKey = Object.prototype.hasOwnProperty.call(updates || {}, 'completedApproval');
 
-         if (hasStatusKey) {
+        if (hasStatusKey) {
 
-             const normalized = normalizeStatusValue(updates.status);
+            const normalized = normalizeStatusValue(updates.status);
 
-             if (normalized) {
+            if (normalized) {
 
-                 updates.status = normalized;
+                updates.status = normalized;
 
-             }
+            }
 
-         }
+        }
 
         // Speed E Com specific reassignment status logic
         if (isSpeedEcomTask && hasDueDateKey && !hasStatusKey) {
@@ -2748,7 +2766,7 @@ exports.updateTask = async (req, res) => {
         // - Assignee can update status (complete/pending/in-progress)
         // - Admin can update status and approval
         // - Only assigner can update other fields (edit task details)
-        
+
         // SPEED E COM AUTH OVERRIDE: 
         // If it's Speed E Com and current user is assignee, 
         // and they are NOT trying to change restricted fields (like title, company, etc.), 
@@ -4502,7 +4520,7 @@ exports.approveTask = async (req, res) => {
 
         }
 
-        
+
 
         res.json({
 
@@ -4514,7 +4532,7 @@ exports.approveTask = async (req, res) => {
 
         });
 
-        
+
 
     } catch (error) {
 
@@ -4542,17 +4560,17 @@ exports.deleteTask = async (req, res) => {
 
         const user = req.user || {};
 
-        
+
 
         console.log(`Attempting to delete task ${id} by user ${user.email}`);
 
-        
+
 
         // Find the task first
 
         const task = await Task.findById(id);
 
-        
+
 
         if (!task) {
 
@@ -4580,7 +4598,7 @@ exports.deleteTask = async (req, res) => {
 
         }
 
-        
+
 
         // Check permissions
 
@@ -4724,11 +4742,11 @@ exports.deleteTask = async (req, res) => {
 
         });
 
-        
+
 
         console.log(`Task ${id} deleted successfully`);
 
-        
+
 
         res.json({
 
@@ -4738,7 +4756,7 @@ exports.deleteTask = async (req, res) => {
 
         });
 
-        
+
 
     } catch (error) {
 
