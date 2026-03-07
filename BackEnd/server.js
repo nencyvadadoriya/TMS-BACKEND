@@ -10,7 +10,7 @@ const { initSocket } = require("./src/realtime/socket");
 const { startPersonalTaskReminderScheduler } = require("./src/utils/personalTaskReminder.scheduler");
 
 const app = express();
-const PORT = process.env.PORT || 8100;
+const PORT = process.env.PORT || 9000;
 
 /* ===============================
    GLOBAL ERROR HANDLING
