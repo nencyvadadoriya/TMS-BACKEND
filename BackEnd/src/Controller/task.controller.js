@@ -1066,54 +1066,14 @@ exports.addTask = async (req, res) => {
 
 
 
-        const [assignedToUser, assignedByUser] = await Promise.all([
-
-            User.findOne({ email: savedTask.assignedTo }).select('_id name email avatar role').lean(),
-
-            User.findOne({ email: savedTask.assignedBy }).select('_id name email avatar role').lean()
-
-        ]);
-
-
-
-        const resolvedBrandName = await resolveBrandNameForTask(savedTask);
+        const resolvedBrandName = brandName || await resolveBrandNameForTask(savedTask);
 
         const responseData = {
-
             ...savedTask.toObject(),
-
             id: savedTask._id,
-
-            brand: resolvedBrandName || (savedTask.brand || ''),
-
-            assignedToUser: assignedToUser ? {
-
-                id: assignedToUser._id,
-
-                name: assignedToUser.name,
-
-                email: assignedToUser.email,
-
-                avatar: assignedToUser.avatar,
-
-                role: assignedToUser.role,
-
-            } : { email: savedTask.assignedTo },
-
-            assignedByUser: assignedByUser ? {
-
-                id: assignedByUser._id,
-
-                name: assignedByUser.name,
-
-                email: assignedByUser.email,
-
-                avatar: assignedByUser.avatar,
-
-                role: assignedByUser.role,
-
-            } : { email: savedTask.assignedBy }
-
+            brand: resolvedBrandName,
+            assignedToUser: { email: savedTask.assignedTo },
+            assignedByUser: { email: savedTask.assignedBy }
         };
 
 
@@ -1130,71 +1090,43 @@ exports.addTask = async (req, res) => {
 
 
 
-        Promise.resolve()
-
-            .then(async () => {
-
+        setImmediate(async () => {
+            try {
+                const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
+                const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
+                
                 const toName = assignedToUser?.name || 'User';
-
                 const assignedByName = assignedByUser?.name || req.user?.name || 'User';
 
-
-
                 await sendTaskAssignedEmail({
-
                     toEmail: savedTask.assignedTo,
-
                     toName,
-
                     assignedByName,
-
                     assignedByEmail: assignedBy,
 
                     task: {
-
                         title: savedTask.title,
-
                         priority: savedTask.priority,
-
                         status: savedTask.status,
-
                         companyName: savedTask.companyName,
-
                         brand: resolvedBrandName || savedTask.brand,
-
                         dueDate: savedTask.dueDate
-
                     }
-
                 });
 
-
-
                 try {
-
                     await sendTaskAssignedPush({
-
                         toEmail: savedTask.assignedTo,
-
                         task: savedTask,
-
                         assignedByName
-
                     });
-
                 } catch (pushErr) {
-
                     console.error('Task assignment push failed:', pushErr?.message || pushErr);
-
                 }
-
-            })
-
-            .catch((err) => {
-
+            } catch (err) {
                 console.error('Task assignment email failed:', err?.message || err);
-
-            });
+            }
+        });
 
 
 
@@ -1830,7 +1762,7 @@ exports.addTaskComment = async (req, res) => {
 
 
 
-        const task = await Task.findById(taskId);
+        const task = await Task.findById(taskId).lean();
 
         if (!task) {
 
@@ -1881,46 +1813,6 @@ exports.addTaskComment = async (req, res) => {
             $addToSet: { comments: comment._id },
 
             updatedAt: Date.now()
-
-        });
-
-
-
-        await TaskHistory.create({
-
-            taskId,
-
-            action: 'comment_added',
-
-            message: `Comment added by ${actor.name}`,
-
-            oldStatus: task.status || null,
-
-            newStatus: task.status || null,
-
-            note: content.trim(),
-
-            additionalData: {
-
-                commentId: comment._id.toString(),
-
-                content: content.trim()
-
-            },
-
-            userId: actor.id,
-
-            user: {
-
-                userId: actor.id,
-
-                userName: actor.name,
-
-                userEmail: actor.email,
-
-                userRole: actor.role
-
-            }
 
         });
 
