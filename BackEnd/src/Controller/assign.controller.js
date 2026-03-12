@@ -401,13 +401,31 @@ exports.getAssignmentsForUser = async (req, res) => {
     }).lean();
 
     const brandIds = Array.from(new Set((docs || []).map((d) => d.brandId?.toString()).filter(Boolean)));
+
+    const isSpeedEcom = normalizeText(companyName).toLowerCase().replace(/\s+/g, '') === 'speedecom';
+
+    let allCompanyTaskTypeIds = [];
+    if (isSpeedEcom) {
+      try {
+        const canonical = await resolveCanonicalCompanyName(companyName);
+        const company = await Company.findOne({ name: { $regex: `^${escapeRegex(canonical)}$`, $options: 'i' } }).select('_id').lean();
+        if (company) {
+          const types = await TaskType.find({ companyId: company._id }).select('_id').lean();
+          allCompanyTaskTypeIds = (types || []).map(t => t._id.toString());
+        }
+      } catch (err) {
+        console.error('Error fetching all task types for speed ecom:', err);
+      }
+    }
+
     const taskTypeIds = Array.from(
-      new Set(
-        (docs || [])
+      new Set([
+        ...(isSpeedEcom ? allCompanyTaskTypeIds : []),
+        ...(docs || [])
           .flatMap((d) => (Array.isArray(d.taskTypeIds) ? d.taskTypeIds : []))
           .map((id) => id.toString())
           .filter(Boolean)
-      )
+      ])
     );
 
     const [brands, taskTypes] = await Promise.all([
@@ -422,7 +440,10 @@ exports.getAssignmentsForUser = async (req, res) => {
     const mapped = (docs || []).map((d) => {
       const bid = d.brandId?.toString() || '';
       const brand = brandById.get(bid);
-      const ids = Array.isArray(d.taskTypeIds) ? d.taskTypeIds.map((id) => id.toString()) : [];
+      const ids = Array.from(new Set([
+        ...(isSpeedEcom ? allCompanyTaskTypeIds : []),
+        ...(Array.isArray(d.taskTypeIds) ? d.taskTypeIds.map((id) => id.toString()) : [])
+      ]));
       return {
         id: d._id,
         companyName: d.companyName || companyName,
