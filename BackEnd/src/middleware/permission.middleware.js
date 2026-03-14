@@ -6,7 +6,7 @@ const Role = require('../model/Role.model');
 const permissionEnum = new Set(['allow', 'deny']);
 
 const ensureDefaultRoles = async () => {
-        const defaults = [
+    const defaults = [
         { moduleId: 'tasks_page', name: 'All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'allow', sales_man: 'allow' } },
         { moduleId: 'calendar_page', name: 'Calendar', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'allow', sales_man: 'allow' } },
         { moduleId: 'reviews_page', name: 'Reviews', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },

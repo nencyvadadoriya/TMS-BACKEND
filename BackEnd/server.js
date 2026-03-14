@@ -10,7 +10,7 @@ const { initSocket } = require("./src/realtime/socket");
 const { startPersonalTaskReminderScheduler } = require("./src/utils/personalTaskReminder.scheduler");
 
 const app = express();
-const PORT = process.env.PORT || 9000;
+const PORT = process.env.PORT || 9001;
 
 /* ===============================
    GLOBAL ERROR HANDLING
@@ -104,7 +104,7 @@ server.listen(PORT, "0.0.0.0", (err) => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log("===================================");
-  
+
   // Start personal task reminder scheduler
   startPersonalTaskReminderScheduler();
 });
