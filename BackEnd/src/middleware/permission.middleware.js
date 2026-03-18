@@ -18,7 +18,7 @@ const ensureDefaultRoles = async () => {
         { moduleId: 'assign_page', name: 'Assign Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_create', name: 'Brand Create', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_edit', name: 'Brand Edit', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'brand_delete', name: 'Brand Delete', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'brand_delete', name: 'Brand Delete', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_assign', name: 'Brand Assign', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'company_bulk_add', name: 'Company Bulk Add', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'company_edit', name: 'Company Edit', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
@@ -28,16 +28,16 @@ const ensureDefaultRoles = async () => {
         { moduleId: 'create_task', name: 'Create Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'allow', sales_man: 'allow' } },
         { moduleId: 'assign_task', name: 'Assign Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'task_brand_assignment', name: 'Task Brand Assignment', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'team', manager: 'own', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'edit_any_task', name: 'Edit Any Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'team', manager: 'own', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'delete_task', name: 'Delete Task', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'team_page', name: 'Team', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'reports_analytics', name: 'Reports / Analytics', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'deny', manager: 'team', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'access_management', name: 'Access Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'reports_analytics', name: 'Reports / Analytics', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'team', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'access_management', name: 'Access Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'profile_page', name: 'Profile', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'allow', sales_man: 'allow' } },
         { moduleId: 'strike_page', name: 'Strike Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'deny', rm: 'deny', am: 'deny', ar: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'personal_tasks_page', name: 'Personal Tasks Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'allow', sales_man: 'allow' } },
+        { moduleId: 'personal_tasks_page', name: 'Personal Tasks Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', troubleshoot_manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'allow', sub_assistance: 'deny', sales_manager: 'allow', sales_man: 'allow' } },
     ];
 
     try {
@@ -68,7 +68,7 @@ const ensureDefaultModules = async () => {
         { moduleId: 'assign_page', name: 'Assign Page', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_create', name: 'Brand Create', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_edit', name: 'Brand Edit', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'brand_delete', name: 'Brand Delete', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'brand_delete', name: 'Brand Delete', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'brand_assign', name: 'Brand Assign', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'company_bulk_add', name: 'Company Bulk Add', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'company_edit', name: 'Company Edit', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
@@ -83,8 +83,8 @@ const ensureDefaultModules = async () => {
         { moduleId: 'view_all_tasks', name: 'View All Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', ar: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'view_assigned_tasks', name: 'View Assigned Tasks', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'team_page', name: 'Team', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', sbm: 'allow', rm: 'allow', am: 'allow', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'reports_analytics', name: 'Reports / Analytics', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'team', ob_manager: 'deny', manager: 'team', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
-        { moduleId: 'access_management', name: 'Access Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'deny', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'reports_analytics', name: 'Reports / Analytics', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'team', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
+        { moduleId: 'access_management', name: 'Access Management', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'deny', manager: 'deny', assistant: 'deny', sub_assistance: 'deny', sales_manager: 'deny', sales_man: 'deny' } },
         { moduleId: 'profile_page', name: 'Profile', defaults: { super_admin: 'allow', admin: 'allow', md_manager: 'allow', ob_manager: 'allow', manager: 'allow', assistant: 'allow', sub_assistance: 'allow', sales_manager: 'allow', sales_man: 'allow' } },
     ];
 
@@ -219,8 +219,21 @@ const requireModulePermission = (moduleId) => {
     return async (req, res, next) => {
         try {
             const role = String(req.user?.role || '').toLowerCase();
+            const companyKey = String(req.user?.companyName || req.user?.company || '').toLowerCase().replace(/\s+/g, '');
             if (role === 'admin' || role === 'super_admin') return next();
             if ((role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar' || role === 'troubleshoot_manager') && (moduleId === 'create_task' || moduleId === 'assign_task')) {
+                return next();
+            }
+
+            // Allow MD Manager access to access_management for MD Impex
+            if (moduleId === 'access_management' && 
+                (role === 'md_manager' || role === 'mdimpex_manager' || role === 'md_impex_manager')) {
+                return next();
+            }
+
+            // Allow MD Impex users to create/assign tasks without explicit module defaults
+            if ((moduleId === 'create_task' || moduleId === 'assign_task') &&
+                (role === 'md_manager' || role === 'mdimpex_manager' || role === 'md_impex_manager' || companyKey === 'mdimpex' || companyKey === 'md_impex')) {
                 return next();
             }
 

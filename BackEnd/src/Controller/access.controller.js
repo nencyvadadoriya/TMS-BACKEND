@@ -20,13 +20,25 @@ const canManageTargetUser = async (requester, targetUserId) => {
     if (!requesterId) return false;
 
     if (requesterRole === 'super_admin' || requesterRole === 'admin') return true;
-
+    // Allow managers to manage their direct reports
     if (requesterRole === 'manager') {
         const target = await User.findById(targetUserId).select('managerId');
         if (!target) return false;
         const targetManagerId = String(target.managerId || '');
         if (String(target._id) === requesterId) return true;
         return targetManagerId && targetManagerId === requesterId;
+    }
+
+    // Allow MD Impex managers to manage users belonging to MD Impex company
+    const mdManagerRoles = new Set(['md_manager', 'mdimpex_manager', 'md_impex_manager']);
+    if (mdManagerRoles.has(requesterRole)) {
+        const target = await User.findById(targetUserId).select('companyName');
+        if (!target) return false;
+        const normalize = (v) => String(v || '').toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9_]/g, '');
+        const targetCompany = normalize(target.companyName || target.company || '');
+        if (!targetCompany) return false;
+        // Accept variants like 'mdimpex', 'md_impex', 'mdimpexindia'
+        return targetCompany.includes('mdimpex') || targetCompany.includes('md_impex') || targetCompany.includes('mdimpexindia');
     }
 
     return false;
@@ -413,6 +425,16 @@ exports.applyTemplateToUser = async (req, res) => {
 
         if (ops.length > 0) {
             await UserPermission.bulkWrite(ops, { ordered: false });
+        }
+
+        // Notify target user (if online) so their client can refresh permissions
+        try {
+            const { getIO } = require('../realtime/socket');
+            const io = getIO();
+            // emit a lightweight event to the user's personal room
+            io.to(`user:${userId}`).emit('permissions:updated', { userId });
+        } catch (e) {
+            // ignore emit errors
         }
 
         return res.json({ success: true });

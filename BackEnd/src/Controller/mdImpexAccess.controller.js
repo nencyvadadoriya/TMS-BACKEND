@@ -44,14 +44,14 @@ const resolveAllowedAssigneeIds = async (allowedAssignees) => {
 exports.getAllRoles = async (req, res) => {
   try {
     const { companyName } = req.query || {};
-    const filterCompanyName = companyName && companyName.toLowerCase().includes('md impex') 
-      ? 'MD Impex' 
+    const filterCompanyName = companyName && companyName.toLowerCase().includes('md impex')
+      ? 'MD Impex'
       : 'MD Impex'; // Default to MD Impex
-    
+
     const roles = await MdImpexAccess.find({ companyName: filterCompanyName })
       .populate('role', 'key name')
       .lean();
-    
+
     // Filter out Speed E Com related roles
     const speedEComKeywords = ['speed', 'ecom', 'speed_ecom', 'speedecom', 'speed-ecom'];
     const filteredRoles = roles.filter(r => {
@@ -59,7 +59,7 @@ exports.getAllRoles = async (req, res) => {
       const roleKey = (r.role?.key || '').toLowerCase();
       return !speedEComKeywords.some(keyword => roleName.includes(keyword) || roleKey.includes(keyword));
     });
-    
+
     return res.status(200).json({
       success: true,
       data: filteredRoles.map(r => ({
@@ -87,9 +87,9 @@ exports.getAllRoles = async (req, res) => {
 exports.getAllMembers = async (req, res) => {
   try {
     const { companyName } = req.query || {};
-    
+
     let members = [];
-    
+
     if (companyName && companyName.toLowerCase().includes('md impex')) {
       // Get users with companyName exactly "MD Impex" or similar variations
       members = await User.find({
@@ -142,7 +142,7 @@ exports.getAllMembers = async (req, res) => {
 exports.createRole = async (req, res) => {
   try {
     const { role, emails = [], description = '' } = req.body || {};
-    
+
     if (!role || !normalizeText(role)) {
       return res.status(400).json({
         success: false,
@@ -152,25 +152,12 @@ exports.createRole = async (req, res) => {
 
     const normalizedRole = normalizeText(role);
     const roleKey = normalizedRole.toLowerCase().replace(/\s+/g, '_');
-    
+
     // Check if role already exists in Role model
     const existingRole = await Role.findOne({ key: roleKey });
-    
-    if (existingRole) {
-      return res.status(409).json({
-        success: false,
-        message: `Role "${normalizedRole}" already exists`
-      });
-    }
-
-    // Create role in Role model
-    const newRole = await Role.create({
-      key: roleKey,
-      name: normalizedRole
-    });
 
     // Normalize emails
-    const normalizedEmails = Array.isArray(emails) 
+    const normalizedEmails = Array.isArray(emails)
       ? emails.map(e => normalizeEmail(e)).filter(e => e)
       : [];
 
@@ -180,8 +167,27 @@ exports.createRole = async (req, res) => {
       email: req.user?.email
     };
 
+    let roleToUse = null;
+    if (existingRole) {
+      roleToUse = existingRole;
+      // If an MdImpexAccess entry for this role+company already exists, return conflict
+      const existingAccess = await MdImpexAccess.findOne({ role: existingRole._id, companyName: 'MD Impex' });
+      if (existingAccess) {
+        return res.status(409).json({
+          success: false,
+          message: `Role "${normalizedRole}" already exists for MD Impex`
+        });
+      }
+    } else {
+      // Create role in Role model
+      roleToUse = await Role.create({
+        key: roleKey,
+        name: normalizedRole
+      });
+    }
+
     const newMdImpexAccess = await MdImpexAccess.create({
-      role: newRole._id,
+      role: roleToUse._id,
       emails: normalizedEmails,
       companyName: 'MD Impex',
       description: normalizeText(description),
@@ -192,8 +198,8 @@ exports.createRole = async (req, res) => {
       success: true,
       data: {
         id: newMdImpexAccess._id?.toString?.() || newMdImpexAccess.id,
-        role: newRole.name,
-        roleKey: newRole.key,
+        role: roleToUse.name,
+        roleKey: roleToUse.key,
         emails: newMdImpexAccess.emails,
         description: newMdImpexAccess.description,
         createdAt: newMdImpexAccess.createdAt
@@ -223,13 +229,13 @@ exports.updateRoleEmails = async (req, res) => {
     }
 
     // Normalize emails
-    const normalizedEmails = Array.isArray(emails) 
+    const normalizedEmails = Array.isArray(emails)
       ? emails.map(e => normalizeEmail(e)).filter(e => e)
       : [];
 
     const updated = await MdImpexAccess.findByIdAndUpdate(
       id,
-      { 
+      {
         emails: normalizedEmails,
         $set: { updatedAt: new Date() }
       },
@@ -300,7 +306,7 @@ exports.deleteRole = async (req, res) => {
 exports.getEmailsByRole = async (req, res) => {
   try {
     const { role } = req.params;
-    
+
     if (!role) {
       return res.status(400).json({
         success: false,
@@ -317,9 +323,9 @@ exports.getEmailsByRole = async (req, res) => {
       });
     }
 
-    const access = await MdImpexAccess.findOne({ 
-      role: roleDoc._id, 
-      companyName: 'MD Impex' 
+    const access = await MdImpexAccess.findOne({
+      role: roleDoc._id,
+      companyName: 'MD Impex'
     }).lean();
 
     return res.status(200).json({
@@ -360,6 +366,7 @@ exports.getAllPersonAccess = async (req, res) => {
         accessRole: p.accessRole?.name || '',
         accessRoleKey: p.accessRole?.key || '',
         allowedAssignees: (p.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
+        allowedTaskTypes: Array.isArray(p.allowedTaskTypes) ? p.allowedTaskTypes : [],
         createdAt: p.createdAt,
         updatedAt: p.updatedAt
       })),
@@ -378,14 +385,15 @@ exports.getAllPersonAccess = async (req, res) => {
 // Create person-wise access
 exports.createPersonAccess = async (req, res) => {
   try {
-    const { 
-      assignedToEmail, 
-      assignedToRole, 
-      accessRole, 
-      allowedAssignees = [] 
+    const {
+      assignedToEmail,
+      assignedToRole,
+      accessRole,
+      allowedAssignees = [],
+      allowedTaskTypes = []
     } = req.body || {};
 
-    console.log('[DEBUG] createPersonAccess received:', { assignedToEmail, assignedToRole, accessRole, allowedAssignees });
+    console.log('[DEBUG] createPersonAccess received:', { assignedToEmail, assignedToRole, accessRole, allowedAssignees, allowedTaskTypes });
 
     if (!assignedToEmail) {
       return res.status(400).json({
@@ -395,8 +403,8 @@ exports.createPersonAccess = async (req, res) => {
     }
 
     // Get user details for assignedToEmail
-    const assignedUser = await User.findOne({ 
-      email: normalizeEmail(assignedToEmail) 
+    const assignedUser = await User.findOne({
+      email: normalizeEmail(assignedToEmail)
     }).select('name email role').lean();
 
     if (!assignedUser) {
@@ -414,6 +422,10 @@ exports.createPersonAccess = async (req, res) => {
 
     const resolvedAllowedAssigneeIds = await resolveAllowedAssigneeIds(allowedAssignees);
 
+    const normalizedAllowedTaskTypes = Array.isArray(allowedTaskTypes)
+      ? allowedTaskTypes.map((v) => normalizeText(v).toLowerCase()).filter(Boolean)
+      : [];
+
     const createdBy = {
       id: req.user?.id || req.user?._id,
       name: req.user?.name,
@@ -426,6 +438,7 @@ exports.createPersonAccess = async (req, res) => {
       assignedToRole: normalizeText(assignedToRole) || assignedUser.role || '',
       accessRole: roleDoc?._id || null,
       allowedAssignees: resolvedAllowedAssigneeIds,
+      allowedTaskTypes: Array.from(new Set(normalizedAllowedTaskTypes)),
       companyName: 'MD Impex',
       createdBy
     });
@@ -440,6 +453,7 @@ exports.createPersonAccess = async (req, res) => {
         accessRole: roleDoc?.name || '',
         accessRoleKey: roleDoc?.key || '',
         allowedAssignees: (newPersonAccess.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
+        allowedTaskTypes: Array.isArray(newPersonAccess.allowedTaskTypes) ? newPersonAccess.allowedTaskTypes : [],
         createdAt: newPersonAccess.createdAt
       },
       message: 'Person access created successfully'
@@ -464,7 +478,7 @@ exports.createPersonAccess = async (req, res) => {
 exports.updatePersonAccess = async (req, res) => {
   try {
     const { id } = req.params;
-    const { accessRole, allowedAssignees = [] } = req.body || {};
+    const { accessRole, allowedAssignees = [], allowedTaskTypes = [] } = req.body || {};
 
     if (!id) {
       return res.status(400).json({
@@ -490,9 +504,14 @@ exports.updatePersonAccess = async (req, res) => {
     const resolvedAllowedAssigneeIds = await resolveAllowedAssigneeIds(allowedAssignees);
     updateData.allowedAssignees = resolvedAllowedAssigneeIds;
 
+    const normalizedAllowedTaskTypes = Array.isArray(allowedTaskTypes)
+      ? allowedTaskTypes.map((v) => normalizeText(v).toLowerCase()).filter(Boolean)
+      : [];
+    updateData.allowedTaskTypes = Array.from(new Set(normalizedAllowedTaskTypes));
+
     const updated = await PersonAccess.findByIdAndUpdate(
       id,
-      { 
+      {
         ...updateData,
         $set: { updatedAt: new Date() }
       },
@@ -516,6 +535,7 @@ exports.updatePersonAccess = async (req, res) => {
         accessRole: updated.accessRole?.name || '',
         accessRoleKey: updated.accessRole?.key || '',
         allowedAssignees: (updated.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
+        allowedTaskTypes: Array.isArray(updated.allowedTaskTypes) ? updated.allowedTaskTypes : [],
         updatedAt: updated.updatedAt
       },
       message: 'Person access updated successfully'

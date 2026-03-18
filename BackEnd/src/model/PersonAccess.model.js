@@ -27,6 +27,11 @@ const PersonAccessSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
+  allowedTaskTypes: {
+    type: [String],
+    default: [],
+    trim: true,
+  },
   companyName: {
     type: String,
     required: true,

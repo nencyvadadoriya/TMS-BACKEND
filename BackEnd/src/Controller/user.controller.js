@@ -410,6 +410,12 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
     const targetRole = normalizeRoleKey(targetUser.role);
 
+    // Check if requester created the target user (allows creator to manage regardless of role)
+    const requesterDoc = await User.findById(reqId).select('email').lean().catch(() => null);
+    const requesterEmail = (requesterDoc?.email || '').toString().trim().toLowerCase();
+    const targetCreatedBy = (targetUser?.createdByEmail || '').toString().trim().toLowerCase();
+    if (requesterEmail && targetCreatedBy && requesterEmail === targetCreatedBy) return true;
+
     if (reqRole === 'super_admin') return true;
 
     if (reqRole === 'admin') {
@@ -476,35 +482,6 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
             || targetRole === 'sub_assistant'
             || targetRole.includes('assistant');
         if (!isAssistantLike) return false;
-    }
-    const requesterDoc = (reqRole === 'sbm' || reqRole === 'rm' || reqRole === 'manager' || reqRole === 'md_manager' || reqRole === 'ob_manager')
-        ? await User.findById(reqId).select('email').lean().catch(() => null)
-        : null;
-    const requesterEmail = (requesterDoc?.email || '').toString().trim().toLowerCase();
-    const targetCreatedBy = (targetUser?.createdByEmail || '').toString().trim().toLowerCase();
-    if (requesterEmail && targetCreatedBy && requesterEmail === targetCreatedBy) return true;
-
-    if (reqRole === 'ob_manager') {
-        const isAssistantLike = targetRole === 'assistant'
-            || targetRole === 'assistance'
-            || targetRole === 'assistence'
-            || targetRole === 'assistece'
-            || targetRole === 'sub_assistance'
-            || targetRole === 'sub_assistence'
-            || targetRole === 'sub_assistece'
-            || targetRole === 'sub_assist'
-            || targetRole === 'sub_assistant'
-            || targetRole.includes('assistant');
-        if (isAssistantLike) {
-            try {
-                const requester = await User.findById(reqId).select('companyName company').lean();
-                const requesterCompany = (requester?.companyName || requester?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-                const targetCompany = (targetUser?.companyName || targetUser?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-                if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
-            } catch {
-                // ignore
-            }
-        }
     }
 
     // Legacy users might have no managerId. For md_manager/ob_manager we allow deleting assistant/sub_assistance

@@ -46,7 +46,7 @@ const allowDeleteTaskCreatorOrPermission = async (req, res, next) => {
 };
 
 const router = express.Router();
-router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar', 'troubleshoot_manager'), requireModulePermission('create_task'), addTask);
+router.post("/addTask", authMiddleware, requireRoles('admin', 'manager', 'md_manager', 'md_impex_manager', 'mdimpex_manager', 'ob_manager', 'assistant', 'sbm', 'rm', 'am', 'ar', 'troubleshoot_manager'), requireModulePermission('create_task'), addTask);
 router.get("/getAllTasks", authMiddleware, getAllTasks);
 router.get("/singleTask/:id", authMiddleware, getSingleTask);
 router.put("/updateTask/:id", authMiddleware, updateTask);

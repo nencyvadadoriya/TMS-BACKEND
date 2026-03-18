@@ -577,6 +577,29 @@ exports.bulkUpsertBrands = async (req, res) => {
     }
     const normalizedInputsUnique = Array.from(uniqByKey.values());
 
+    // Check for existing brands to identify duplicates before bulkWrite
+    const existingBrandsCheck = [];
+    for (const row of normalizedInputsUnique) {
+      existingBrandsCheck.push({
+        name: row.payload.name,
+        company: row.payload.company,
+        groupNumber: row.payload.groupNumber || ''
+      });
+    }
+
+    const existingDocs = await Brand.find({
+      owner: ownerId,
+      $or: existingBrandsCheck.map(b => ({
+        name: { $regex: `^${escapeRegex(b.name)}$`, $options: 'i' },
+        company: { $regex: `^${escapeRegex(b.company)}$`, $options: 'i' },
+        groupNumber: b.groupNumber
+      }))
+    }).select('name company groupNumber').lean();
+
+    const existingKeys = new Set(existingDocs.map(d => 
+      `${normalizeText(d.company)}::${normalizeText(d.name)}::${normalizeText(d.groupNumber)}`
+    ));
+
     const ops = [];
     const keysByCompany = new Map();
     const uniqueRmEmails = new Set();
