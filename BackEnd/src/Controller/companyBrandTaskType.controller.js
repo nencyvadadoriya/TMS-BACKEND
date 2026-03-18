@@ -28,9 +28,9 @@ const resolveBrandIdFromRequest = async ({ brandId, brandName, companyName }) =>
   const safeName = escapeRegex(name);
   const query = company
     ? {
-        name: { $regex: `^${safeName}$`, $options: 'i' },
-        company: { $regex: `^${escapeRegex(company)}$`, $options: 'i' }
-      }
+      name: { $regex: `^${safeName}$`, $options: 'i' },
+      company: { $regex: `^${escapeRegex(company)}$`, $options: 'i' }
+    }
     : { name: { $regex: `^${safeName}$`, $options: 'i' } };
 
   const brand = await Brand.findOne(query).select('_id name company').lean();

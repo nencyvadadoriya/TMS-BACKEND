@@ -84,7 +84,7 @@ const resolveAllowedCompanyNamesForUser = async (user) => {
 const withAssignedBrandIds = async (user) => {
   try {
     const role = String(user?.role || '').toLowerCase();
-    if (role !== 'manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am') return user;
+    if (role !== 'manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am' && role !== 'sales_manager' && role !== 'sales_man') return user;
 
     const id = (user?.id || user?._id || '').toString();
     if (!mongoose.Types.ObjectId.isValid(id)) return user;
@@ -136,7 +136,12 @@ const userCanAccessBrand = (brand, user) => {
   const brandId = String(brand._id || brand.id || '');
   const hasAssignedAccess = brandId && assigned.includes(brandId);
 
-  if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am') {
+  if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am' || role === 'sales_manager' || role === 'sales_man') {
+    const isSalesRole = role === 'sales_manager' || role === 'sales_man';
+    if (isSalesRole) {
+      const brandCompany = normalizeText(brand.company);
+      if (brandCompany.replace(/\s+/g, '').toLowerCase() === 'speedecom') return true;
+    }
     return Boolean(hasAssignedAccess);
   }
 
@@ -1250,7 +1255,9 @@ exports.getBrands = async (req, res) => {
       role !== 'super_admin' &&
       role !== 'md_manager' &&
       role !== 'rm' &&
-      role !== 'am'
+      role !== 'am' &&
+      role !== 'sales_manager' &&
+      role !== 'sales_man'
     ) {
       try {
         const assignPerm = await getEffectivePermissionForUser(requesterId, 'assign_page');
@@ -1285,9 +1292,22 @@ exports.getBrands = async (req, res) => {
           { 'collaborators.email': requesterEmail, 'collaborators.status': { $in: ['accepted', 'active'] } }
         ]
       };
-    } else if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am') {
+    } else if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am' || role === 'sales_manager' || role === 'sales_man') {
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
-      query = { _id: { $in: assignedBrandIds } };
+      const userCompany = normalizeString(user.companyName || user.company);
+      const isSalesRole = role === 'sales_manager' || role === 'sales_man';
+
+      const companyOr = [];
+      if (userCompany) {
+        companyOr.push({ company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } });
+      }
+      if (isSalesRole) {
+        companyOr.push({ company: { $regex: '^Speed\\s*E\\s*Com$', $options: 'i' } });
+      }
+
+      query = companyOr.length > 0
+        ? { $or: [{ _id: { $in: assignedBrandIds } }, ...companyOr] }
+        : { _id: { $in: assignedBrandIds } };
     } else {
       query = {
         $or: [
@@ -1401,10 +1421,18 @@ exports.getAssignedBrands = async (req, res) => {
           { 'collaborators.email': requesterEmail, 'collaborators.status': { $in: ['accepted', 'active'] } }
         ]
       };
-    } else if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am') {
-      // Assistants can only see assigned brands
+    } else if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am' || role === 'sales_manager' || role === 'sales_man') {
+      // Assistants, SBM, RM, AM, Sales Manager, Sales Man can see assigned brands and brands of their company
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
-      query = { _id: { $in: assignedBrandIds } };
+      const userCompany = normalizeString(user.companyName || user.company);
+
+      const companyQuery = userCompany 
+        ? { company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } } 
+        : null;
+
+      query = companyQuery 
+        ? { $or: [{ _id: { $in: assignedBrandIds } }, companyQuery] }
+        : { _id: { $in: assignedBrandIds } };
     } else {
       // Other users can see their own brands and accepted collaborator brands
       query = {

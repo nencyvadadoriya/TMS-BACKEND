@@ -191,11 +191,11 @@ exports.upsertCompanyTaskTypes = async (req, res) => {
 
     const legacy = !existing
       ? await CompanyTaskType.findOne({
-          companyId: null,
-          companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
-        })
-          .select('_id taskTypeIds companyName companyId')
-          .lean()
+        companyId: null,
+        companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+      })
+        .select('_id taskTypeIds companyName companyId')
+        .lean()
       : null;
 
     const target = existing || legacy;
@@ -216,10 +216,10 @@ exports.upsertCompanyTaskTypes = async (req, res) => {
 
     const saved = target?._id
       ? await CompanyTaskType.findByIdAndUpdate(
-          target._id,
-          { $set: update, $setOnInsert: { createdBy: actorId } },
-          { new: true }
-        ).lean()
+        target._id,
+        { $set: update, $setOnInsert: { createdBy: actorId } },
+        { new: true }
+      ).lean()
       : await CompanyTaskType.create({ ...update, createdBy: actorId });
 
     const doc = saved?.toObject ? saved.toObject() : saved;
@@ -234,8 +234,8 @@ exports.upsertCompanyTaskTypes = async (req, res) => {
         const existing = company?.id
           ? await CompanyTaskType.findOne({ companyId: company.id }).lean()
           : await CompanyTaskType.findOne({
-              companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
-            }).lean();
+            companyName: { $regex: `^${escapeRegex(companyName)}$`, $options: 'i' }
+          }).lean();
         if (existing) {
           const formatted = await formatCompanyTaskTypes(existing);
           return res.status(200).json({ success: true, data: formatted });

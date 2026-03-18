@@ -2096,17 +2096,6 @@ exports.addTask = async (req, res) => {
 
 
 
-        // Record task creation in history
-
-        try {
-
-            await recordTaskCreated({ req, task: savedTask });
-
-        } catch (auditError) {
-
-            console.error('Task creation audit failed:', auditError);
-
-        }
 
 
 
@@ -2114,19 +2103,6 @@ exports.addTask = async (req, res) => {
 
 
 
-        await maybeAddBrandToAssignee({
-
-
-
-            assignedToEmail: savedTask?.assignedTo,
-
-
-
-            brandId: savedTask?.brandId
-
-
-
-        });
 
 
 
@@ -2134,7 +2110,8 @@ exports.addTask = async (req, res) => {
 
 
 
-        const resolvedBrandName = brandName || await resolveBrandNameForTask(savedTask);
+
+        const resolvedBrandName = brandName || '';
 
 
 
@@ -2182,78 +2159,56 @@ exports.addTask = async (req, res) => {
 
 
 
+        // Offload non-critical operations to background
         setImmediate(async () => {
-
             try {
-
-                const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
-
-                const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
-
-
-
-                const toName = assignedToUser?.name || 'User';
-
-                const assignedByName = assignedByUser?.name || req.user?.name || 'User';
-
-
-
-                await sendTaskAssignedEmail({
-
-                    toEmail: savedTask.assignedTo,
-
-                    toName,
-
-                    assignedByName,
-
-                    assignedByEmail: assignedBy,
-
-
-
-                    task: {
-
-                        title: savedTask.title,
-
-                        priority: savedTask.priority,
-
-                        status: savedTask.status,
-
-                        companyName: savedTask.companyName,
-
-                        brand: resolvedBrandName || savedTask.brand,
-
-                        dueDate: savedTask.dueDate
-
-                    }
-
-                });
-
-
-
+                // 1. Record task creation in history
                 try {
-
-                    await sendTaskAssignedPush({
-
-                        toEmail: savedTask.assignedTo,
-
-                        task: savedTask,
-
-                        assignedByName
-
-                    });
-
-                } catch (pushErr) {
-
-                    console.error('Task assignment push failed:', pushErr?.message || pushErr);
-
+                    await recordTaskCreated({ req, task: savedTask });
+                } catch (auditError) {
+                    console.error('Task creation audit failed:', auditError);
                 }
 
+                // 2. Add brand to assignee's profile if needed
+                await maybeAddBrandToAssignee({
+                    assignedToEmail: savedTask?.assignedTo,
+                    brandId: savedTask?.brandId
+                });
+
+                // 3. Send notifications (Email/Push)
+                const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
+                const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
+
+                const toName = assignedToUser?.name || 'User';
+                const assignedByName = assignedByUser?.name || req.user?.name || 'User';
+
+                await sendTaskAssignedEmail({
+                    toEmail: savedTask.assignedTo,
+                    toName,
+                    assignedByName,
+                    assignedByEmail: assignedBy,
+                    task: {
+                        title: savedTask.title,
+                        priority: savedTask.priority,
+                        status: savedTask.status,
+                        companyName: savedTask.companyName,
+                        brand: resolvedBrandName || savedTask.brand,
+                        dueDate: savedTask.dueDate
+                    }
+                });
+
+                try {
+                    await sendTaskAssignedPush({
+                        toEmail: savedTask.assignedTo,
+                        task: savedTask,
+                        assignedByName
+                    });
+                } catch (pushErr) {
+                    console.error('Task assignment push failed:', pushErr?.message || pushErr);
+                }
             } catch (err) {
-
-                console.error('Task assignment email failed:', err?.message || err);
-
+                console.error('Background task operations failed:', err?.message || err);
             }
-
         });
 
 
