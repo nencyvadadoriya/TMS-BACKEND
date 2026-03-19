@@ -28,6 +28,24 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
 
   const payload = {
     tokens: tokenList,
+    notification: {
+      title,
+      body,
+      sound: 'default'
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        channelId: 'default'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default'
+        }
+      }
+    },
     data: {
       title,
       body,
@@ -92,7 +110,21 @@ const sendChatMessagePush = async ({ toUserId, fromName, messageText, senderId }
     tokens: tokenList,
     notification: {
       title,
-      body
+      body,
+      sound: 'default'
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        channelId: 'default'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default'
+        }
+      }
     },
     data: {
       title,
@@ -151,6 +183,24 @@ const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }
 
   const payload = {
     tokens: tokenList,
+    notification: {
+      title,
+      body,
+      sound: 'default'
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        channelId: 'default'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default'
+        }
+      }
+    },
     data: {
       title,
       body,
