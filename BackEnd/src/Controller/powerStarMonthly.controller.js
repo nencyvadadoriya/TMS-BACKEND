@@ -63,7 +63,10 @@ const mergeSavedIntoRoster = (rosterRows, savedRows) => {
       churn: normalizeWeekArr(r?.churn),
       liveAssign: normalizeWeekArr(r?.liveAssign),
       hits: normalizeWeekArr(r?.hits),
-      freeze: Boolean(r?.freeze ?? false)
+      freeze: Boolean(r?.freeze ?? false),
+      freezeChurn: Boolean(r?.freezeChurn ?? false),
+      freezeLiveAssign: Boolean(r?.freezeLiveAssign ?? false),
+      freezeHits: Boolean(r?.freezeHits ?? false)
     };
     console.log('MERGE - PAYLOAD FOR USER', uid || em, payload);
     if (uid) byUserId.set(uid, payload);
@@ -79,7 +82,10 @@ const mergeSavedIntoRoster = (rosterRows, savedRows) => {
     const merged = {
       ...r,
       ...match,
-      freeze: match.freeze // always take freeze from saved data
+      freeze: match.freeze, // always take freeze from saved data
+      freezeChurn: match.freezeChurn,
+      freezeLiveAssign: match.freezeLiveAssign,
+      freezeHits: match.freezeHits
     };
     console.log('MERGE - RESULT FOR', uid || em, merged);
     return merged;
@@ -129,7 +135,10 @@ exports.saveMonthly = async (req, res) => {
       churn: normalizeWeekArr(r.churn),
       liveAssign: normalizeWeekArr(r.liveAssign),
       hits: normalizeWeekArr(r.hits),
-      freeze: Boolean(r?.freeze ?? false)
+      freeze: Boolean(r?.freeze ?? false),
+      freezeChurn: Boolean(r?.freezeChurn ?? false),
+      freezeLiveAssign: Boolean(r?.freezeLiveAssign ?? false),
+      freezeHits: Boolean(r?.freezeHits ?? false)
     }));
 
     console.log('PROCESSED ROWS TO SAVE:', rows);
