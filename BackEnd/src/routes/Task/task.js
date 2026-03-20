@@ -16,6 +16,8 @@ const {
     approveTask,
     getTaskReviews,
     submitTaskReview,
+    getAssignedByMeTasks,
+    getAssignedToMeTasks,
 } = require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
 const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
@@ -56,6 +58,8 @@ router.put('/tasks/:id/approve', authMiddleware, approveTask)
 
 // Task reviews
 router.get('/reviews', authMiddleware, getTaskReviews);
+router.get('/assigned-to-me', authMiddleware, getAssignedToMeTasks);
+router.get('/assigned-by-me', authMiddleware, getAssignedByMeTasks);
 router.post('/:id/review', authMiddleware, submitTaskReview);
 
 // Task comments routes

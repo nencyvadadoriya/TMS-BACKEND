@@ -9241,269 +9241,123 @@ exports.deleteTask = async (req, res) => {
 
 
 
-
-
-
-
         try {
-
-
-
             const googleTaskId = task?.googleSync?.taskId;
-
-
-
             if (googleTaskId) {
-
-
-
                 const tasksScope = 'https://www.googleapis.com/auth/tasks';
-
-
-
                 const ownerEmail = normalizeEmail(task?.googleSync?.ownerEmail)
-
-
-
                     || normalizeEmail(task?.assignedBy)
-
-
-
                     || normalizeEmail(task?.assignedTo);
-
-
-
-
-
-
-
                 if (ownerEmail) {
-
-
-
                     const ownerUser = await User.findOne({ email: ownerEmail })
-
-
-
                         .select('email isGoogleCalendarConnected googleOAuth.refreshToken googleOAuth.scope')
-
-
-
                         .lean();
-
-
-
-
-
-
-
                     const refreshToken = ownerUser?.isGoogleCalendarConnected ? ownerUser?.googleOAuth?.refreshToken : null;
-
-
-
                     const scopes = Array.isArray(ownerUser?.googleOAuth?.scope) ? ownerUser.googleOAuth.scope : [];
-
-
-
-
-
-
-
                     if (refreshToken && scopes.includes(tasksScope)) {
-
-
-
                         const tokenResponse = await refreshAccessToken(refreshToken);
-
-
-
                         const accessToken = tokenResponse?.access_token;
-
-
-
-
-
-
-
                         if (accessToken) {
-
-
-
                             try {
-
-
-
                                 await deleteGoogleTask({
-
-
-
                                     accessToken,
-
-
-
                                     tasklistId: task?.googleSync?.tasklistId || '@default',
-
-
-
                                     taskId: googleTaskId
-
-
-
                                 });
-
-
-
                             } catch (googleDeleteError) {
-
-
-
                                 const statusCode = googleDeleteError?.statusCode;
-
-
-
                                 if (statusCode !== 404) {
-
-
-
                                     throw googleDeleteError;
-
-
-
                                 }
-
-
-
                             }
-
-
-
                         }
-
-
-
                     }
-
-
-
                 }
-
-
-
             }
-
-
-
         } catch (googleError) {
-
-
-
             console.error('Google task delete failed:', googleError?.message || googleError);
-
-
-
         }
-
-
-
-
-
-
-
         await Task.findByIdAndUpdate(id, {
-
-
-
             $set: {
-
-
-
                 isDeleted: true,
-
-
-
                 deletedAt: new Date(),
-
-
-
                 deletedBy: normalizeEmail(user.email),
-
-
-
                 updatedAt: Date.now()
-
-
-
             }
-
-
-
         });
-
-
-
-
-
-
-
         console.log(`Task ${id} deleted successfully`);
-
-
-
-
-
-
-
         res.json({
-
-
-
             success: true,
-
-
-
             message: 'Task deleted successfully'
-
-
-
         });
-
-
-
-
-
-
-
     } catch (error) {
-
-
-
         console.error('Error deleting task:', error);
-
-
-
         res.status(500).json({
-
-
-
             success: false,
-
-
-
             message: 'Error deleting task',
-
-
-
             error: error.message
-
-
-
         });
-
-
-
     }
-
-
-
 };
 
+exports.getAssignedByMeTasks = async (req, res) => {
+    try {
+        const requesterEmail = normalizeEmail(req.user?.email);
+        if (!requesterEmail) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const tasks = await Task.find({ 
+            assignedBy: requesterEmail,
+            isDeleted: { $ne: true } 
+        }).sort({ createdAt: -1 }).lean();
+        const populatedTasks = tasks.map(task => ({
+            ...task,
+            id: task._id,
+            assignedToUser: { email: task.assignedTo },
+        }));
+
+        res.json({
+            success: true,
+            data: populatedTasks,
+            message: 'Tasks fetched successfully'
+        });
+    } catch (error) {
+        console.error('Error fetching assigned by me tasks:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching assigned by me tasks',
+            error: error.message
+        });
+    }
+};
+
+exports.getAssignedToMeTasks = async (req, res) => {
+    try {
+        const requesterEmail = normalizeEmail(req.user?.email);
+        if (!requesterEmail) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const tasks = await Task.find({ 
+            assignedTo: requesterEmail,
+            isDeleted: { $ne: true } 
+        }).sort({ createdAt: -1 }).lean();
+        const populatedTasks = tasks.map(task => ({
+            ...task,
+            id: task._id,
+            assignedByUser: { email: task.assignedBy },
+        }));
+
+        res.json({
+            success: true,
+            data: populatedTasks,
+            message: 'Tasks fetched successfully'
+        });
+    } catch (error) {
+        console.error('Error fetching assigned to me tasks:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching assigned to me tasks',
+            error: error.message
+        });
+    }
+};
