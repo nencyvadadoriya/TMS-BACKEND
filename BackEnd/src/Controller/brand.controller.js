@@ -1297,17 +1297,19 @@ exports.getBrands = async (req, res) => {
       const userCompany = normalizeString(user.companyName || user.company);
       const isSalesRole = role === 'sales_manager' || role === 'sales_man';
 
-      const companyOr = [];
-      if (userCompany) {
-        companyOr.push({ company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } });
-      }
       if (isSalesRole) {
-        companyOr.push({ company: { $regex: '^Speed\\s*E\\s*Com$', $options: 'i' } });
-      }
+        // Sales managers and sales men can see all brands
+        query = {};
+      } else {
+        const companyOr = [];
+        if (userCompany) {
+          companyOr.push({ company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } });
+        }
 
-      query = companyOr.length > 0
-        ? { $or: [{ _id: { $in: assignedBrandIds } }, ...companyOr] }
-        : { _id: { $in: assignedBrandIds } };
+        query = companyOr.length > 0
+          ? { $or: [{ _id: { $in: assignedBrandIds } }, ...companyOr] }
+          : { _id: { $in: assignedBrandIds } };
+      }
     } else {
       query = {
         $or: [
@@ -1422,17 +1424,23 @@ exports.getAssignedBrands = async (req, res) => {
         ]
       };
     } else if (role === 'assistant' || role === 'sbm' || role === 'rm' || role === 'am' || role === 'sales_manager' || role === 'sales_man') {
-      // Assistants, SBM, RM, AM, Sales Manager, Sales Man can see assigned brands and brands of their company
-      const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
-      const userCompany = normalizeString(user.companyName || user.company);
+      // Assistants, SBM, RM, AM have restrictions; Sales roles can see all for task creation
+      const isSalesRole = role === 'sales_manager' || role === 'sales_man';
+      
+      if (isSalesRole) {
+        query = {};
+      } else {
+        const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
+        const userCompany = normalizeString(user.companyName || user.company);
 
-      const companyQuery = userCompany 
-        ? { company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } } 
-        : null;
+        const companyQuery = userCompany 
+          ? { company: { $regex: `^${escapeRegex(userCompany)}$`, $options: 'i' } } 
+          : null;
 
-      query = companyQuery 
-        ? { $or: [{ _id: { $in: assignedBrandIds } }, companyQuery] }
-        : { _id: { $in: assignedBrandIds } };
+        query = companyQuery 
+          ? { $or: [{ _id: { $in: assignedBrandIds } }, companyQuery] }
+          : { _id: { $in: assignedBrandIds } };
+      }
     } else {
       // Other users can see their own brands and accepted collaborator brands
       query = {
