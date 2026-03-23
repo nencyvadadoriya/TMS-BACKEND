@@ -1801,9 +1801,7 @@ function canViewTaskReviews(user) {
 
 
         || r === 'md_manager'
-
-
-
+        || r === 'marketer_manager'
         || isAssistantRoleKey(r);
 
 
@@ -1824,7 +1822,7 @@ function canSubmitTaskReview(user) {
 
 
 
-    return r === 'admin' || r === 'super_admin' || r === 'manager' || r === 'md_manager' || r === 'ob_manager';
+    return r === 'admin' || r === 'super_admin' || r === 'manager' || r === 'marketer_manager' || r === 'md_manager' || r === 'ob_manager';
 
 
 

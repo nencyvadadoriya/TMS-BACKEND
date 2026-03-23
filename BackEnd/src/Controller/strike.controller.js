@@ -138,13 +138,12 @@ exports.getMdImpexStrike = async (req, res) => {
       const assigneeRole = roleByEmail.get(assignedTo) || '';
 
       const assignerIsMd = assignerRole === 'md_manager' || assignerRole === 'troubleshoot_manager' || assignerRole === 'all_manager';
-      const assigneeIsManager = assigneeRole === 'manager';
+      const assigneeIsManager = assigneeRole === 'manager' || assigneeRole === 'marketer_manager';
 
       if (!assignerIsMd || !assigneeIsManager) return false;
 
-      if (currentRoleKey === 'md_manager' && currentEmail) {
-        return assignedBy === currentEmail;
-      }
+      // md_manager now sees ALL scoped tasks (including those assigned by troubleshoot_manager)
+      // — same visibility as troubleshoot_manager and admin.
 
       return true;
     });

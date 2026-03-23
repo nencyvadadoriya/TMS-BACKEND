@@ -84,7 +84,7 @@ const resolveAllowedCompanyNamesForUser = async (user) => {
 const withAssignedBrandIds = async (user) => {
   try {
     const role = String(user?.role || '').toLowerCase();
-    if (role !== 'manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am' && role !== 'sales_manager' && role !== 'sales_man') return user;
+    if (role !== 'manager' && role !== 'marketer_manager' && role !== 'md_manager' && role !== 'assistant' && role !== 'sbm' && role !== 'rm' && role !== 'am' && role !== 'sales_manager' && role !== 'sales_man') return user;
 
     const id = (user?.id || user?._id || '').toString();
     if (!mongoose.Types.ObjectId.isValid(id)) return user;
@@ -153,7 +153,7 @@ const userCanAccessBrand = (brand, user) => {
     if (companyAllowed) return true;
   }
 
-  if (role === 'manager' || role === 'md_manager') {
+  if (role === 'manager' || role === 'marketer_manager' || role === 'md_manager') {
     const isAcceptedCollaborator = (brand.collaborators || []).some(c => normalizeEmail(c.email) === userEmail && (c.status === 'accepted' || c.status === 'active'));
     return Boolean(isOwner || hasAssignedAccess || isAcceptedCollaborator);
   }
@@ -190,7 +190,7 @@ exports.getBrandHistoryFeed = async (req, res) => {
           company: { $regex: `^${escapeRegex(name)}$`, $options: 'i' }
         }))
       };
-    } else if (role === 'manager') {
+    } else if (role === 'manager' || role === 'marketer_manager') {
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {
         $or: [
@@ -1254,6 +1254,7 @@ exports.getBrands = async (req, res) => {
       role !== 'admin' &&
       role !== 'super_admin' &&
       role !== 'md_manager' &&
+      role !== 'marketer_manager' &&
       role !== 'rm' &&
       role !== 'am' &&
       role !== 'sales_manager' &&
@@ -1283,7 +1284,7 @@ exports.getBrands = async (req, res) => {
       };
     } else if (allowCompanyWideForAssignment) {
       query = {};
-    } else if (role === 'manager') {
+    } else if (role === 'manager' || role === 'marketer_manager') {
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {
         $or: [
@@ -1413,7 +1414,7 @@ exports.getAssignedBrands = async (req, res) => {
           company: { $regex: `^${escapeRegex(name)}$`, $options: 'i' }
         }))
       };
-    } else if (role === 'manager') {
+    } else if (role === 'manager' || role === 'marketer_manager') {
       // Managers can see their own brands and assigned brands
       const assignedBrandIds = Array.isArray(user.assignedBrandIds) ? user.assignedBrandIds : [];
       query = {

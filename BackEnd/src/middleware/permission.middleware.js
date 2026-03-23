@@ -206,11 +206,12 @@ const getEffectivePermissionForUser = async (userId, moduleId) => {
     const mod = await AccessModule.findOne({ moduleId }).select('defaults');
     if (!mod) return 'deny';
 
-    const role = String(user.role || '').toLowerCase();
+    const role = String(user.role || '').toLowerCase().replace(/[\s-]+/g, '_');
+    const roleKeyToCheck = role === 'marketer_manager' ? 'manager' : role;
     const fallback = (mod.defaults && typeof mod.defaults.get === 'function')
-        ? mod.defaults.get(role)
-        : (mod.defaults && mod.defaults[role])
-            ? mod.defaults[role]
+        ? mod.defaults.get(roleKeyToCheck)
+        : (mod.defaults && mod.defaults[roleKeyToCheck])
+            ? mod.defaults[roleKeyToCheck]
             : 'deny';
     return permissionEnum.has(fallback) ? fallback : 'deny';
 };
@@ -218,7 +219,7 @@ const getEffectivePermissionForUser = async (userId, moduleId) => {
 const requireModulePermission = (moduleId) => {
     return async (req, res, next) => {
         try {
-            const role = String(req.user?.role || '').toLowerCase();
+            const role = String(req.user?.role || '').toLowerCase().replace(/[\s-]+/g, '_');
             const companyKey = String(req.user?.companyName || req.user?.company || '').toLowerCase().replace(/\s+/g, '');
             if (role === 'admin' || role === 'super_admin') return next();
             if ((role === 'sbm' || role === 'rm' || role === 'am' || role === 'ar' || role === 'troubleshoot_manager') && (moduleId === 'create_task' || moduleId === 'assign_task')) {

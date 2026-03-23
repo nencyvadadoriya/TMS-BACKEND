@@ -16,7 +16,7 @@ const { sendOtpEmail, sendAccountCreatedEmail } = require('../middleware/email.m
 const { _getEffectivePermissionsMap } = require('./access.controller');
 const { emitUserUpserted, emitUserDeleted } = require('../realtime/userEvents');
 
-const normalizeRole = (value) => String(value || '').trim().toLowerCase();
+const normalizeRole = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 const normalizeRoleKey = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 
 const ROLE_PARENTS = {
@@ -32,6 +32,7 @@ const ROLE_PARENTS = {
     sales_manager: ['sbm', 'admin', 'super_admin'],
     sales_man: ['sales_manager', 'admin', 'super_admin'],
     troubleshoot_manager: ['admin', 'md_manager'],
+    marketer_manager: ['md_manager', 'admin', 'super_admin'],
 };
 
 
@@ -49,6 +50,7 @@ const ROLE_DISPLAY_NAMES = {
     rm: 'RM',
     am: 'AM',
     troubleshoot_manager: 'Troubleshoot Manager',
+    marketer_manager: 'Marketer Manager',
 };
 
 const toObjectIdString = (value) => {
@@ -151,7 +153,7 @@ exports.updateAmHierarchy = async (req, res) => {
         const requesterRole = normalizeRole(req.user?.role);
         const requesterId = (req.user?.id || req.user?._id || '').toString();
 
-        if (requesterRole !== 'admin' && requesterRole !== 'super_admin' && requesterRole !== 'sbm') {
+        if (requesterRole !== 'admin' && requesterRole !== 'super_admin' && requesterRole !== 'sbm' && requesterRole !== 'md_manager') {
             return res.status(403).json({ success: false, message: 'Access denied' });
         }
 
@@ -178,8 +180,8 @@ exports.updateAmHierarchy = async (req, res) => {
             return res.status(400).json({ success: false, message: 'managerId must be an RM user' });
         }
 
-        // SBM can only move AMs under RMs they can manage.
-        if (requesterRole === 'sbm') {
+        // SBM/MD Manager can only move AMs under RMs they can manage.
+        if (requesterRole === 'sbm' || requesterRole === 'md_manager') {
             const canManageTarget = await canManageUserByChain({ requesterRole, requesterId, targetUser: targetAm });
             if (!canManageTarget) {
                 return res.status(403).json({ success: false, message: 'Access denied.' });
@@ -391,12 +393,12 @@ const isAdminLike = (role) => {
 
 const isManagerLike = (role) => {
     const r = normalizeRoleKey(role);
-    return r === 'manager' || r === 'md_manager';
+    return r === 'manager' || r === 'md_manager' || r === 'marketer_manager';
 };
 
 const isHierarchyManager = (role) => {
     const r = normalizeRoleKey(role);
-    return r === 'admin' || r === 'super_admin' || r === 'md_manager' || r === 'ob_manager' || r === 'sbm' || r === 'rm' || r === 'manager';
+    return r === 'admin' || r === 'super_admin' || r === 'md_manager' || r === 'ob_manager' || r === 'sbm' || r === 'rm' || r === 'manager' || r === 'marketer_manager';
 };
 
 const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) => {
@@ -425,24 +427,20 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
     }
 
     if (reqRole === 'md_manager') {
-        if (targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'md_manager') return false;
-        if (targetRole === 'ob_manager') return false;
-        if (targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am') return false;
+        const adminLikeTarget = targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'ob_manager' || targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am';
+        if (adminLikeTarget) return false;
 
-        // Allow MD Manager to manage manager and troubleshoot_manager in same company
-        if ((targetRole === 'manager' || targetRole === 'troubleshoot_manager') && reqRole === 'md_manager') {
-
-            try {
-                const [requester, targetDoc] = await Promise.all([
-                    User.findById(reqId).select('companyName company').lean().catch(() => null),
-                    User.findById(targetId).select('companyName company').lean().catch(() => null),
-                ]);
-                const requesterCompany = (requester?.companyName || requester?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-                const targetCompany = (targetDoc?.companyName || targetDoc?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-                if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
-            } catch {
-                // ignore
-            }
+        // Allow MD Manager to manage users in their own company (md_manager, manager, troubleshoot_manager, assistant, etc.)
+        try {
+            const [requester, targetDoc] = await Promise.all([
+                User.findById(reqId).select('companyName company').lean().catch(() => null),
+                User.findById(targetId).select('companyName company').lean().catch(() => null),
+            ]);
+            const requesterCompany = String(requester?.companyName || requester?.company || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            const targetCompany = String(targetDoc?.companyName || targetDoc?.company || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
+        } catch {
+            // ignore
         }
     }
 
@@ -470,7 +468,7 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
         if (targetRole !== 'am') return false;
     }
 
-    if (reqRole === 'manager') {
+    if (reqRole === 'manager' || reqRole === 'marketer_manager') {
         const isAssistantLike = targetRole === 'assistant'
             || targetRole === 'assistance'
             || targetRole === 'assistence'
@@ -923,7 +921,7 @@ exports.getAllUsers = async (req, res) => {
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
             const companyFilter = companySafe ? { companyName: { $regex: `^${companySafe}$`, $options: 'i' } } : {};
             const [managers, mdManagers, obManagers, assistants] = await Promise.all([
-                User.find({ role: 'manager', ...companyFilter }).select('_id').lean(),
+                User.find({ role: { $in: ['manager', 'marketer_manager'] }, ...companyFilter }).select('_id').lean(),
                 User.find({ role: 'md_manager', ...companyFilter }).select('_id').lean(),
                 User.find({ role: 'ob_manager', ...companyFilter }).select('_id').lean(),
                 User.find({ role: { $in: ['assistant', 'sub_assistance'] }, ...companyFilter }).select('_id').lean(),
@@ -960,13 +958,14 @@ exports.getAllUsers = async (req, res) => {
 
             }
 
-        } else if (requesterRole === 'manager') {
+        } else if (requesterRole === 'manager' || requesterRole === 'marketer_manager') {
             query = {
                 $or: [
                     { _id: requesterId },
                     { role: 'assistant' },
                     { role: 'sub_assistance' },
                     { role: 'manager' },
+                    { role: 'marketer_manager' },
                     { role: 'ob_manager' }
                 ]
             };
@@ -1462,20 +1461,26 @@ exports.updateUser = async (req, res) => {
 
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'role')) {
             const requestedRole = normalizeRoleKey((updates || {}).role);
-            const allowedSpeedRoles = new Set(['sbm', 'rm', 'am']);
-            const canSetRole = (canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom)
-                ? allowedSpeedRoles.has(requestedRole)
-                : false;
+            const isSpeedEcomOperation = canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom;
+
+            let canSetRole = false;
+            if (isSpeedEcomOperation) {
+                const allowedSpeedRoles = new Set(['sbm', 'rm', 'am']);
+                canSetRole = allowedSpeedRoles.has(requestedRole);
+            } else if (isAdminLike(requesterRole) || requesterRoleKey === 'md_manager') {
+                canSetRole = true;
+            }
+
             if (!canSetRole) {
                 delete updates.role;
             } else {
-                // AM special-case: only allow updating role; strip other fields for safety.
-                Object.keys(updates || {}).forEach((k) => {
-                    if (k !== 'role') delete updates[k];
-                });
-
+                if (isSpeedEcomOperation) {
+                    // AM/SBM special-case: only allow updating role; strip other fields for safety.
+                    Object.keys(updates || {}).forEach((k) => {
+                        if (k !== 'role') delete updates[k];
+                    });
+                }
                 updates.role = ROLE_DISPLAY_NAMES[requestedRole] || requestedRole;
-
             }
         }
 
@@ -1491,7 +1496,7 @@ exports.updateUser = async (req, res) => {
                 delete updates.managerId;
             } else if (!mongoose.Types.ObjectId.isValid(nextManagerId)) {
                 delete updates.managerId;
-            } else if (!isAdminLike(requesterRole) && nextManagerId !== requesterId) {
+            } else if (!isAdminLike(requesterRole) && requesterRoleKey !== 'md_manager' && nextManagerId !== requesterId) {
                 delete updates.managerId;
             } else {
                 const managerUser = await User.findById(nextManagerId).select('role managerId').lean();
@@ -1599,6 +1604,13 @@ exports.deleteUser = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
+            });
+        }
+
+        if (requesterRoleKey === 'md_manager' && normalizeRoleKey(userToDelete.role) === 'md_manager') {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied. MD Manager cannot delete another MD Manager.'
             });
         }
 

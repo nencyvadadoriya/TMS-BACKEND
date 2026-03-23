@@ -193,7 +193,8 @@ const getEffectivePermissionsMap = async (userId) => {
             result[moduleId] = overrideVal;
             return;
         }
-        const def = getDefaultForRole(m.defaults, role) ? String(getDefaultForRole(m.defaults, role)) : 'deny';
+        const roleKeyToCheck = role === 'marketer_manager' ? 'manager' : role;
+        const def = getDefaultForRole(m.defaults, roleKeyToCheck) ? String(getDefaultForRole(m.defaults, roleKeyToCheck)) : 'deny';
         result[moduleId] = permissionEnum.has(def) ? def : 'deny';
     });
 

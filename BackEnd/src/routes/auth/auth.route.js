@@ -43,8 +43,8 @@ router.post('/createUser', authMiddleware, createUser);
 router.delete('/deleteUser/:id', authMiddleware, deleteUser);
 router.put('/updateUser/:id', authMiddleware, updateUser);
 
-// Hierarchy Routes (Admin/SBM only)
-router.put('/am/:id/hierarchy', authMiddleware, requireRoles('admin', 'sbm'), updateAmHierarchy);
+// Hierarchy Routes (Admin/SBM/MD Manager only)
+router.put('/am/:id/hierarchy', authMiddleware, requireRoles('admin', 'sbm', 'md_manager'), updateAmHierarchy);
 
 router.post('/profile/avatar', authMiddleware, upload.single('avatar'), uploadProfileAvatar);
 router.delete('/profile/avatar', authMiddleware, removeProfileAvatar);

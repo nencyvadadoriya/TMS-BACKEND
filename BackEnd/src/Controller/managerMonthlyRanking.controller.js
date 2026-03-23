@@ -28,7 +28,7 @@ const buildManagerRoster = async () => {
     .lean();
 
   return (users || [])
-    .filter((u) => normalizeRoleKey(u?.role) === 'manager')
+    .filter((u) => ['manager', 'marketer_manager'].includes(normalizeRoleKey(u?.role)))
     .map((u) => ({
       userId: String(u?._id || u?.id || ''),
       name: normalizeText(u?.name || u?.email || ''),

@@ -11,13 +11,14 @@ const requireRoles = (...roles) => {
         allowedSet.add('ob_manager');
         allowedSet.add('troubleshoot_manager');
         allowedSet.add('all_manager');
+        allowedSet.add('marketer_manager');
       }
     });
 
   const allowed = Array.from(allowedSet);
 
   return (req, res, next) => {
-    const userRole = String(req.user?.role || '').toLowerCase();
+    const userRole = String(req.user?.role || '').toLowerCase().replace(/[\s-]+/g, '_');
 
     if (!allowed.includes(userRole)) {
       return res.status(403).json({
