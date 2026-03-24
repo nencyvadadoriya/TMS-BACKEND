@@ -1,95 +1,31 @@
-
-
-// controllers/task.controller.js
-
-
-
 const mongoose = require('mongoose');
-
-
-
 const Task = require('../model/Task.model');
-
-
-
 const Brand = require('../model/Brand.model');
-
-
-
 const User = require('../model/user.model');
-
-
-
 const Comment = require('../model/Comment.model');
-
-
-
 const TaskHistory = require('../model/TaskHistory.model');
-
-
-
 const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
-
-
-
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
-
-
-
 const { sendTaskAssignedPush } = require('../utils/pushNotifications.util');
-
-
-
 const { emitTaskUpserted } = require('../realtime/taskEvents');
-
-
-
 const managerAllowedBrandIdSet = async (user) => {
-
-    // Returns a Set of allowed brandIds for manager. If no data is available,
-
-    // returns an empty Set (which means: do not block by brand).
-
     try {
-
-        const u = user || {};
-
+       const u = user || {};
         const ids = new Set();
-
-
-
         const addId = (v) => {
-
             if (!v) return;
-
             const id = String(v).trim();
-
             if (!id) return;
-
             if (mongoose.Types.ObjectId.isValid(id)) ids.add(id);
-
         };
-
-
-
-        // Common shapes we have seen across deployments
-
+       // Common shapes we have seen across deployments
         (Array.isArray(u.allowedBrandIds) ? u.allowedBrandIds : []).forEach(addId);
-
         (Array.isArray(u.brandIds) ? u.brandIds : []).forEach(addId);
-
         (Array.isArray(u.brands) ? u.brands : []).forEach((b) => addId(b?._id || b?.id || b));
-
         (Array.isArray(u.brandAccess) ? u.brandAccess : []).forEach((b) => addId(b?._id || b?.id || b));
-
         (Array.isArray(u.brandPermissions) ? u.brandPermissions : []).forEach((b) => addId(b?._id || b?.id || b));
-
         (Array.isArray(u.companyBrands) ? u.companyBrands : []).forEach((b) => addId(b?._id || b?.id || b));
-
-
-
         return ids;
-
     } catch {
 
         return new Set();
@@ -101,17 +37,8 @@ const managerAllowedBrandIdSet = async (user) => {
 
 
 const {
-
-
-
     recordStatusChange,
-
-
-
     recordApprovalChange,
-
-
-
     recordTaskUpdate,
 
 
@@ -705,13 +632,6 @@ exports.mdImpexReassignTask = async (req, res) => {
 
 
         } catch (auditError) {
-
-
-
-            console.error('MD Impex reassignment audit failed:', auditError);
-
-
-
         }
 
 
@@ -841,13 +761,6 @@ exports.mdImpexReassignTask = async (req, res) => {
 
 
         } catch (emitError) {
-
-
-
-            console.error('emitTaskUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
-
-
-
         }
 
 
@@ -9283,13 +9196,11 @@ exports.deleteTask = async (req, res) => {
                 updatedAt: Date.now()
             }
         });
-        console.log(`Task ${id} deleted successfully`);
         res.json({
             success: true,
             message: 'Task deleted successfully'
         });
     } catch (error) {
-        console.error('Error deleting task:', error);
         res.status(500).json({
             success: false,
             message: 'Error deleting task',
@@ -9320,7 +9231,6 @@ exports.getAssignedByMeTasks = async (req, res) => {
             message: 'Tasks fetched successfully'
         });
     } catch (error) {
-        console.error('Error fetching assigned by me tasks:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching assigned by me tasks',
@@ -9351,7 +9261,6 @@ exports.getAssignedToMeTasks = async (req, res) => {
             message: 'Tasks fetched successfully'
         });
     } catch (error) {
-        console.error('Error fetching assigned to me tasks:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching assigned to me tasks',

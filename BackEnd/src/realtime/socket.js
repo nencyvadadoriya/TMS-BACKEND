@@ -14,7 +14,6 @@ function normalizeCompanyKey(value) {
 }
 
 function initSocket(server) {
-    console.log('Initializing Socket.io server...');
     
     io = new Server(server, {
         cors: {
@@ -24,44 +23,32 @@ function initSocket(server) {
         },
     });
 
-    console.log('Socket.io server created');
-
     io.on('connection', (socket) => {
         console.log('New socket connection established');
         console.log('Socket ID:', socket.id);
         
         const auth = socket.handshake.auth || {};
-        console.log('Auth data received:', auth);
 
         const userId = (auth.userId || '').toString();
         const role = (auth.role || '').toString().trim().toLowerCase();
         const companyName = (auth.companyName || '').toString();
 
-        console.log('User info:', { userId, role, companyName });
-
         const companyKey = normalizeCompanyKey(companyName);
 
         if (companyKey) {
             socket.join(`company:${companyKey}`);
-            console.log(`User joined company room: company:${companyKey}`);
         }
 
         if (userId) {
             socket.join(`user:${userId}`);
-            console.log(`User ${userId} joined their personal room: user:${userId}`);
-            console.log('Rooms now:', Array.from(socket.rooms || []));
         }
 
         if (role === 'admin' || role === 'super_admin') {
             socket.join('role:admin-like');
-            console.log(`Admin user joined admin room`);
         }
 
         // Handle sending messages
         socket.on('send_message', async (data, callback) => {
-            console.log('send_message event received:', data);
-            console.log('From socket:', socket.id);
-            console.log('User ID:', userId);
             
             try {
                 const { receiverId, content } = data;
@@ -69,8 +56,6 @@ function initSocket(server) {
 
                 const senderName = (data?.senderName || auth.userName || 'Unknown').toString();
                 const senderEmail = (data?.senderEmail || auth.userEmail || 'unknown@example.com').toString();
-
-                console.log('Processing message:', { senderId, receiverId, content });
 
                 if (!receiverId || !content) {
                     console.log('Invalid message data:', { receiverId, content });
@@ -98,21 +83,17 @@ function initSocket(server) {
                     read: doc.read,
                 };
 
-                console.log('Created message object:', message);
-
                 io.to(`user:${senderId}`).emit('chat_list_update', {
                     otherUserId: receiverId,
                     lastMessageAt: message.timestamp,
                     unreadIncrement: 0,
                 });
-                console.log('Emitted chat_list_update to sender room', `user:${senderId}`);
 
                 io.to(`user:${receiverId}`).emit('chat_list_update', {
                     otherUserId: senderId,
                     lastMessageAt: message.timestamp,
                     unreadIncrement: 1,
                 });
-                console.log('Emitted chat_list_update to receiver room', `user:${receiverId}`);
 
                 try {
                     await sendChatMessagePush({
@@ -122,23 +103,17 @@ function initSocket(server) {
                         senderId: senderId,
                     });
                 } catch (e) {
-                    console.log('[push] chat push failed:', e?.message || e);
                 }
 
                 // Send to receiver if they're online
                 const receiverSockets = await io.in(`user:${receiverId}`).fetchSockets();
-                console.log(`Found ${receiverSockets.length} sockets for receiver ${receiverId}`);
                 
                 if (receiverSockets.length > 0) {
-                    console.log('Sending message to receiver...');
                     io.to(`user:${receiverId}`).emit('new_message', message);
-                    console.log(`Message delivered to user ${receiverId}`);
                 } else {
-                    console.log(`User ${receiverId} is offline, message not delivered`);
                 }
 
                 // Send confirmation to sender
-                console.log('Sending confirmation to sender');
                 callback(message);
 
             } catch (error) {
@@ -152,8 +127,6 @@ function initSocket(server) {
             try {
                 const { userId: peerUserId, page = 1, limit = 50 } = data;
                 const currentUserId = userId;
-
-                console.log('Fetching chat history:', { currentUserId, peerUserId, page, limit });
 
                 if (!peerUserId) {
                     return callback({ error: 'userId is required' });
@@ -193,11 +166,9 @@ function initSocket(server) {
         });
 
         socket.on('disconnect', (reason) => {
-            console.log('Socket disconnected:', socket.id, 'Reason:', reason);
         });
     });
 
-    console.log('Socket.io event listeners set up');
     return io;
 }
 

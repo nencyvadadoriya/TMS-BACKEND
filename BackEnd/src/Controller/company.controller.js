@@ -14,7 +14,6 @@ exports.getCompanies = async (req, res) => {
     const companies = await Company.find({ isDeleted: { $ne: true } }).sort({ name: 1 }).lean();
     res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
   } catch (error) {
-    console.error('Error fetching companies:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch companies' });
   }
 };
@@ -61,7 +60,6 @@ exports.getAllowedCompanies = async (req, res) => {
     const companies = await Company.find({ isDeleted: { $ne: true } }).sort({ name: 1 }).lean();
     return res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
   } catch (error) {
-    console.error('Error fetching allowed companies:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch companies' });
   }
 };
@@ -71,7 +69,6 @@ exports.getDeletedCompanies = async (req, res) => {
     const companies = await Company.find({ isDeleted: true }).sort({ name: 1 }).lean();
     res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
   } catch (error) {
-    console.error('Error fetching deleted companies:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch deleted companies' });
   }
 };
@@ -92,7 +89,6 @@ exports.getCompanyHistory = async (req, res) => {
     const history = company.history || [];
     res.status(200).json({ success: true, data: history });
   } catch (error) {
-    console.error('Error fetching company history:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch company history' });
   }
 };
@@ -136,8 +132,6 @@ exports.createCompany = async (req, res) => {
         return res.status(200).json({ success: true, data: formatCompany(existing.toObject()) });
       }
     }
-
-    console.error('Error creating company:', error);
     res.status(500).json({ success: false, message: 'Failed to create company' });
   }
 };
@@ -169,7 +163,6 @@ exports.bulkUpsertCompanies = async (req, res) => {
 
     res.status(200).json({ success: true, data: results });
   } catch (error) {
-    console.error('Error bulk upserting companies:', error);
     res.status(500).json({ success: false, message: 'Failed to bulk upsert companies' });
   }
 };
@@ -221,8 +214,6 @@ exports.updateCompany = async (req, res) => {
     if (error?.code === 11000) {
       return res.status(409).json({ success: false, message: 'Company name already exists' });
     }
-
-    console.error('Error updating company:', error);
     res.status(500).json({ success: false, message: 'Failed to update company' });
   }
 };
@@ -270,7 +261,6 @@ exports.deleteCompany = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Company deleted successfully' });
   } catch (error) {
-    console.error('Error deleting company:', error);
     res.status(500).json({ success: false, message: 'Failed to delete company' });
   }
 };

@@ -261,7 +261,6 @@ exports.getBrandHistoryFeed = async (req, res) => {
 
     res.status(200).json({ success: true, data, total, page, limit });
   } catch (error) {
-    console.error('Error fetching brand history feed:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch brand history' });
   }
 };
@@ -470,7 +469,6 @@ exports.createBrand = async (req, res) => {
       try {
         emitBrandUpserted(formatBrand(existing.toObject()));
       } catch (emitError) {
-        console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
       }
 
       return res.status(200).json({ success: true, data: formatBrand(existing.toObject()) });
@@ -526,12 +524,10 @@ exports.createBrand = async (req, res) => {
     try {
       emitBrandUpserted(formatBrand(created.toObject()));
     } catch (emitError) {
-      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
 
     res.status(201).json({ success: true, data: formatBrand(created.toObject()) });
   } catch (error) {
-    console.error('Error creating brand:', error);
     res.status(500).json({ success: false, message: 'Failed to create brand' });
   }
 };
@@ -663,7 +659,6 @@ exports.bulkUpsertBrands = async (req, res) => {
       // We can proceed because successful ops are already applied.
       if (code === 11000 || name === 'BulkWriteError') {
         try {
-          console.warn('[brands/bulk] bulkWrite partial failure (continuing):', e?.message || e);
         } catch {
           // ignore
         }
@@ -858,7 +853,7 @@ exports.bulkUpsertBrands = async (req, res) => {
         try {
 
           if (process.env.NODE_ENV !== 'production') {
-            console.log('[brands/bulk] rm/am emails:', emails.length, 'users found:', Array.isArray(users) ? users.length : 0);
+            
           }
 
         } catch {
@@ -942,7 +937,6 @@ exports.bulkUpsertBrands = async (req, res) => {
             try {
 
               if (process.env.NODE_ENV !== 'production') {
-                console.log('[brands/bulk] mapping upserted:', mappingOps.length);
               }
 
             } catch {
@@ -953,7 +947,6 @@ exports.bulkUpsertBrands = async (req, res) => {
 
           } catch (e) {
             try {
-              console.warn('[brands/bulk] mapping bulkWrite failed (ignored):', e?.message || e);
             } catch {
               // ignore
             }
@@ -1001,7 +994,6 @@ exports.bulkUpsertBrands = async (req, res) => {
 
     res.status(200).json({ success: true, data: results, meta: { assignment: assignmentMeta } });
   } catch (error) {
-    console.error('Error bulk upserting brands:', error);
     const msg = error?.message || 'Failed to bulk upsert brands';
     res.status(500).json({ success: false, message: msg });
   }
@@ -1035,7 +1027,6 @@ exports.getUserBrands = async (req, res) => {
 
     res.status(200).json({ success: true, data: formatted });
   } catch (error) {
-    console.error('Error fetching brands:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch brands' });
   }
 };
@@ -1090,7 +1081,6 @@ exports.getBrandDetails = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching brand details:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch brand details' });
   }
 };
@@ -1164,7 +1154,6 @@ exports.inviteCollaborator = async (req, res) => {
       data: { ...brand.toObject(), id: brand._id }
     });
   } catch (error) {
-    console.error('Error inviting collaborator:', error);
     res.status(500).json({ success: false, message: 'Failed to invite collaborator', error: error.message });
   }
 };
@@ -1225,7 +1214,6 @@ exports.respondToInvite = async (req, res) => {
       data: { ...brand.toObject(), id: brand._id }
     });
   } catch (error) {
-    console.error('Error responding to invite:', error);
     res.status(500).json({ success: false, message: 'Failed to respond to invite', error: error.message });
   }
 };
@@ -1377,7 +1365,6 @@ exports.getBrands = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching brands:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch brands',
@@ -1492,7 +1479,6 @@ exports.getAssignedBrands = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching assigned brands:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch assigned brands',
@@ -1563,7 +1549,6 @@ exports.getBrandById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching brand by ID:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch brand',
@@ -1693,7 +1678,6 @@ exports.updateBrand = async (req, res) => {
     try {
       emitBrandUpserted(formatBrand(brand.toObject()));
     } catch (emitError) {
-      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
 
     res.status(200).json({
@@ -1703,7 +1687,6 @@ exports.updateBrand = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error updating brand:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to update brand',
@@ -1794,7 +1777,6 @@ exports.deleteBrand = async (req, res) => {
     try {
       emitBrandDeleted({ brandId: brand?._id, companyName: brand?.company });
     } catch (emitError) {
-      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
 
     res.status(200).json({
@@ -1808,7 +1790,6 @@ exports.deleteBrand = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error deleting brand:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to delete brand',
@@ -1893,7 +1874,6 @@ exports.softDeleteBrand = async (req, res) => {
     try {
       emitBrandDeleted({ brandId: deletedBrand?._id, companyName: deletedBrand?.company });
     } catch (emitError) {
-      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
 
     return res.json({
@@ -1903,7 +1883,6 @@ exports.softDeleteBrand = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error deleting brand:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -1974,7 +1953,6 @@ exports.restoreBrand = async (req, res) => {
     try {
       emitBrandUpserted(formatBrand(restoredBrand.toObject()));
     } catch (emitError) {
-      console.error('emitBrandUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
     
     res.json({
@@ -1984,7 +1962,6 @@ exports.restoreBrand = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error restoring brand:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -2008,7 +1985,6 @@ exports.getDeletedBrands = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error fetching deleted brands:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -2051,7 +2027,6 @@ exports.hardDeleteBrand = async (req, res) => {
     try {
       emitBrandDeleted({ brandId: brand?._id, companyName: brand?.company });
     } catch (emitError) {
-      console.error('emitBrandDeleted failed:', emitError && emitError.message ? emitError.message : emitError);
     }
     
     res.json({
@@ -2060,7 +2035,6 @@ exports.hardDeleteBrand = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error hard deleting brand:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
