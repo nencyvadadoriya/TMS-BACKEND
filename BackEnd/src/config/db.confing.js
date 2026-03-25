@@ -18,7 +18,6 @@ let connecting = false;
 const connectWithRetry = async () => {
     if (connecting) return;
     if (!mongoUrl) {
-        console.error('DB connection skipped: MONGODB_URI is not set');
         return;
     }
 
@@ -28,7 +27,7 @@ const connectWithRetry = async () => {
         retryDelayMs = Number(process.env.MONGO_RETRY_DELAY_MS || 2000);
     } catch (err) {
         const msg = err && err.message ? err.message : err;
-        console.error('DB connect failed:', msg);
+      
         const delay = Math.min(maxRetryDelayMs, Math.max(500, retryDelayMs));
         retryDelayMs = Math.min(maxRetryDelayMs, retryDelayMs * 2);
         setTimeout(() => {

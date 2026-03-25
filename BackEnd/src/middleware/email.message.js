@@ -8,13 +8,6 @@ try {
     sendgridTransport = null;
 }
 
-console.log('🔧 Email Configuration Check:');
-console.log('USER_EMAIL:', process.env.USER_EMAIL || '❌ Missing');
-console.log('USER_PASS_KEY:', process.env.USER_PASS_KEY ? '✅ Set (length: ' + process.env.USER_PASS_KEY.length + ')' : '❌ Missing');
-console.log('SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? '✅ Set (length: ' + process.env.SENDGRID_API_KEY.length + ')' : '❌ Missing');
-console.log('EMAIL_FROM:', process.env.EMAIL_FROM || '❌ Missing');
-console.log('NODE_ENV:', process.env.NODE_ENV || 'development');
-
 // Create transporter with detailed error handling
 const createTransporter = () => {
     try {
@@ -22,8 +15,6 @@ const createTransporter = () => {
 
         if (usingSendGrid) {
             if (!sendgridTransport) {
-                console.error('❌ SENDGRID_API_KEY is set but nodemailer-sendgrid-transport is not installed');
-                console.error('Install it with: npm i nodemailer-sendgrid-transport');
                 return null;
             }
 
@@ -37,13 +28,7 @@ const createTransporter = () => {
 
             transporter.verify((error) => {
                 if (error) {
-                    console.error('❌ SendGrid transporter verification failed:', {
-                        message: error.message,
-                        code: error.code,
-                        command: error.command
-                    });
                 } else {
-                    console.log('✅ SendGrid email transport is ready');
                 }
             });
 
@@ -68,27 +53,12 @@ const createTransporter = () => {
         // Verify connection
         transporter.verify((error, success) => {
             if (error) {
-                console.error('❌ Email transporter verification failed:', {
-                    message: error.message,
-                    code: error.code,
-                    command: error.command
-                });
-                
-                // Check specific errors
-                if (error.code === 'EAUTH') {
-                    console.error('⚠️ Authentication failed. Check:');
-                    console.error('1. Is 2-Step Verification enabled on Google Account?');
-                    console.error('2. Is the App Password correct?');
-                    console.error('3. Try generating a new App Password');
-                }
             } else {
-                console.log('✅ Email server is ready to send messages');
             }
         });
 
         return transporter;
     } catch (error) {
-        console.error('❌ Failed to create email transporter:', error.message);
         return null;
     }
 };
@@ -98,11 +68,8 @@ let transporter = createTransporter();
 // Send OTP Email with comprehensive error handling
 exports.sendOtpEmail = async (email, otp, name = 'User') => {
     try {
-        console.log(`📤 [${new Date().toISOString()}] Attempting to send OTP to: ${email}`);
-        
         // Validate inputs
         if (!email || !otp) {
-            console.error('❌ Missing email or OTP');
             return false;
         }
 
@@ -111,19 +78,13 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
 
         if (usingSendGrid) {
             if (!process.env.SENDGRID_API_KEY) {
-                console.error('❌ SENDGRID_API_KEY not found in environment');
                 return false;
             }
             if (!fromAddress) {
-                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
                 return false;
             }
         } else {
             if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-                console.error('❌ Email credentials not found in environment');
-                console.log('Please check environment variables:');
-                console.log('- USER_EMAIL should be a Gmail address');
-                console.log('- USER_PASS_KEY should be 16-character App Password');
                 return false;
             }
         }
@@ -134,7 +95,6 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
         }
 
         if (!transporter) {
-            console.error('❌ Email transporter not initialized');
             return false;
         }
 
@@ -162,10 +122,10 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
                         
                         <div style="padding: 40px 30px;">
                             <h2 style="color: #333; margin-top: 0;">Hello ${name},</h2>
- 　 　 　 　 　 　 　 　 <p style="color: #555; line-height: 1.6; font-size: 16px;">
- 　 　 　 　 　 　 　 　 　 You requested to reset your password. Please use the One-Time Password (OTP) below to verify your identity:
- 　 　 　 　 　 　 　 　 </p>
- 　 　 　 　 　 　 　 　 <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                            <p style="color: #555; line-height: 1.6; font-size: 16px;">
+                                You requested to reset your password. Please use the One-Time Password (OTP) below to verify your identity:
+                            </p>
+                            <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
                                             color: white; 
                                             border-radius: 12px; 
                                             padding: 25px; 
@@ -177,19 +137,19 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
                                             box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                                 ${otp}
                             </div>
- 　 　 　 　 　 　 　 　 <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
- 　 　 　 　 　 　 　 　 　 <p style="margin: 0; color: #856404;">
- 　 　 　 　 　 　 　 　 　 　 <strong>⚠️ Important:</strong> 
- 　 　 　 　 　 　 　 　 　 　 <ul style="margin: 10px 0 0 0; padding-left: 20px;">
- 　 　 　 　 　 　 　 　 　 　 　 <li>This OTP is valid for <strong>2 minutes</strong> only</li>
- 　 　 　 　 　 　 　 　 　 　 　 <li>Do not share this OTP with anyone</li>
- 　 　 　 　 　 　 　 　 　 　 　 <li>If you didn't request this, please ignore this email</li>
- 　 　 　 　 　 　 　 　 　 　 </ul>
- 　 　 　 　 　 　 　 　 　 </p>
- 　 　 　 　 　 　 　 　 </div>
- 　 　 　 　 　 　 　 　 <p style="color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
- 　 　 　 　 　 　 　 　 　 Need help? Contact our support team or reply to this email.
- 　 　 　 　 　 　 　 　 </p>
+                            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; color: #856404;">
+                                    <strong>⚠️ Important:</strong> 
+                                    <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+                                        <li>This OTP is valid for <strong>2 minutes</strong> only</li>
+                                        <li>Do not share this OTP with anyone</li>
+                                        <li>If you didn't request this, please ignore this email</li>
+                                    </ul>
+                                </p>
+                            </div>
+                            <p style="color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
+                                Need help? Contact our support team or reply to this email.
+                            </p>
                         </div>
                         
                         <div style="background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px; border-top: 1px solid #dee2e6;">
@@ -227,39 +187,12 @@ exports.sendOtpEmail = async (email, otp, name = 'User') => {
             `
         };
 
-        console.log('📧 Sending email with options:', {
-            from: mailOptions.from,
-            to: mailOptions.to,
-            subject: mailOptions.subject
-        });
-
         // Send email
         const info = await transporter.sendMail(mailOptions);
-        
-        console.log('✅ Email sent successfully!');
-        console.log('📨 Message ID:', info.messageId);
-        console.log('📧 Response:', info.response);
         
         return true;
         
     } catch (error) {
-        console.error('❌ Email sending failed with details:');
-        console.error('Error Message:', error.message);
-        console.error('Error Code:', error.code);
-        console.error('Error Command:', error.command);
-        console.error('Error Response Code:', error.responseCode);
-        console.error('Error Response:', error.response);
-        
-        // Specific error handling
-        if (error.code === 'EAUTH') {
-            console.error('\n🔐 AUTHENTICATION FAILED - SOLUTIONS:');
-            console.error('1. Go to: https://myaccount.google.com/security');
-            console.error('2. Enable "2-Step Verification"');
-            console.error('3. Generate new "App Password" for Mail');
-            console.error('4. Update USER_PASS_KEY in Render.com');
-            console.error('5. Current USER_PASS_KEY length:', process.env.USER_PASS_KEY?.length);
-        }
-        
         return false;
     }
 };
@@ -276,7 +209,6 @@ exports.sendAccountCreatedEmail = async ({
         const safeTo = (toEmail || '').toString().trim().toLowerCase();
 
         if (!safeTo) {
-            console.error('❌ Missing toEmail for account created email');
             return false;
         }
 
@@ -285,16 +217,13 @@ exports.sendAccountCreatedEmail = async ({
 
         if (usingSendGrid) {
             if (!process.env.SENDGRID_API_KEY) {
-                console.error('❌ SENDGRID_API_KEY not found in environment');
                 return false;
             }
             if (!fromAddress) {
-                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
                 return false;
             }
         } else {
             if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-                console.error('❌ Email credentials not found in environment');
                 return false;
             }
         }
@@ -304,7 +233,6 @@ exports.sendAccountCreatedEmail = async ({
         }
 
         if (!transporter) {
-            console.error('❌ Email transporter not initialized');
             return false;
         }
 
@@ -392,21 +320,8 @@ This is an automated email. Please do not reply.
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             try {
                 const info = await transporter.sendMail(mailOptions);
-                console.log('✅ Account created email sent successfully!', {
-                    to: safeTo,
-                    messageId: info.messageId,
-                    response: info.response,
-                    attempt
-                });
-                return true;
+                return { success: true, info };
             } catch (error) {
-                console.error('❌ Account created email sending failed with details:');
-                console.error('Error Message:', error?.message);
-                console.error('Error Code:', error?.code);
-                console.error('Error Command:', error?.command);
-                console.error('Error Response Code:', error?.responseCode);
-                console.error('Error Response:', error?.response);
-
                 const code = (error?.code || '').toString();
                 const shouldRetry =
                     attempt < maxAttempts
@@ -433,12 +348,6 @@ This is an automated email. Please do not reply.
 
         return false;
     } catch (error) {
-        console.error('❌ Account created email sending failed with details:');
-        console.error('Error Message:', error?.message);
-        console.error('Error Code:', error?.code);
-        console.error('Error Command:', error?.command);
-        console.error('Error Response Code:', error?.responseCode);
-        console.error('Error Response:', error?.response);
         return false;
     }
 };
@@ -448,7 +357,6 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
         const safeTo = (toEmail || '').toString().trim().toLowerCase();
         
         if (!safeTo) {
-            console.error('❌ Missing toEmail for task assignment email');
             return false;
         }
 
@@ -457,16 +365,13 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
 
         if (usingSendGrid) {
             if (!process.env.SENDGRID_API_KEY) {
-                console.error('❌ SENDGRID_API_KEY not found in environment');
                 return false;
             }
             if (!fromAddress) {
-                console.error('❌ EMAIL_FROM (or USER_EMAIL) not found in environment');
                 return false;
             }
         } else {
             if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
-                console.error('❌ Email credentials not found in environment');
                 return false;
             }
         }
@@ -476,7 +381,6 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
         }
 
         if (!transporter) {
-            console.error('❌ Email transporter not initialized');
             return false;
         }
 
@@ -558,31 +462,16 @@ exports.sendTaskAssignedEmail = async ({ toEmail, toName = 'User', assignedByNam
 
         const info = await transporter.sendMail(mailOptions);
 
-        console.log('✅ Task assignment email sent successfully!', {
-            to: safeTo,
-            messageId: info.messageId,
-            response: info.response
-        });
-
-        return true;
+        return { success: true, info };
     } catch (error) {
-        console.error('❌ Task assignment email sending failed:', error?.message || error);
         return false;
     }
 };
 
 // Test function
 exports.testEmailService = async (testEmail = 'test@example.com') => {
-    console.log('\n🧪 TESTING EMAIL SERVICE...');
-    
     const testOtp = Math.floor(100000 + Math.random() * 900000);
     const result = await exports.sendOtpEmail(testEmail, testOtp, 'Test User');
-    
-    if (result) {
-        console.log('✅ Email service test PASSED');
-    } else {
-        console.log('❌ Email service test FAILED');
-    }
     
     return result;
 };

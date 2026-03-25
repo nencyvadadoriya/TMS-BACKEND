@@ -12,14 +12,9 @@ router.post('/tasks/:taskId/comments', auth, async (req, res) => {
     const { content } = req.body;
     const userId = req.user.id;
 
-    console.log('Adding comment to task:', taskId);
-    console.log('User:', req.user);
-    console.log('Content:', content);
-
     // Check if task exists
     const task = await Task.findById(taskId);
     if (!task) {
-      console.error('Task not found:', taskId);
       return res.status(404).json({ error: 'Task not found' });
     }
 
@@ -34,7 +29,6 @@ router.post('/tasks/:taskId/comments', auth, async (req, res) => {
     });
 
     await comment.save();
-    console.log('Comment saved to DB:', comment._id);
 
     // Update task with comment reference and denormalized latest comment
     await Task.findByIdAndUpdate(taskId, {
@@ -62,7 +56,6 @@ router.post('/tasks/:taskId/comments', auth, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error adding comment:', error);
     res.status(500).json({
       error: 'Failed to add comment',
       details: error.message
@@ -75,13 +68,9 @@ router.get('/tasks/:taskId/comments', auth, async (req, res) => {
   try {
     const { taskId } = req.params;
 
-    console.log('Fetching comments for task:', taskId);
-
     const comments = await Comment.find({ taskId })
       .sort({ createdAt: -1 })
       .lean();
-
-    console.log(`Found ${comments.length} comments for task ${taskId}`);
 
     res.json(comments.map(comment => ({
       id: comment._id.toString(),
@@ -96,7 +85,6 @@ router.get('/tasks/:taskId/comments', auth, async (req, res) => {
     })));
 
   } catch (error) {
-    console.error('Error fetching comments:', error);
     res.status(500).json({
       error: 'Failed to fetch comments',
       details: error.message
@@ -109,8 +97,6 @@ router.delete('/tasks/:taskId/comments/:commentId', auth, async (req, res) => {
   try {
     const { taskId, commentId } = req.params;
     const userId = req.user.id;
-
-    console.log('Deleting comment:', commentId, 'from task:', taskId);
 
     // Find comment
     const comment = await Comment.findById(commentId);
@@ -143,7 +129,6 @@ router.delete('/tasks/:taskId/comments/:commentId', auth, async (req, res) => {
     res.json({ message: 'Comment deleted successfully' });
 
   } catch (error) {
-    console.error('Error deleting comment:', error);
     res.status(500).json({
       error: 'Failed to delete comment',
       details: error.message

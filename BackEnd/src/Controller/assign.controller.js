@@ -134,7 +134,6 @@ exports.assignCompaniesToMdManager = async (req, res) => {
       message: 'Companies assigned successfully'
     });
   } catch (error) {
-    console.error('Error assigning companies to MD Manager:', error);
     return res.status(500).json({ success: false, message: 'Failed to assign companies' });
   }
 };
@@ -207,7 +206,6 @@ exports.assignCompaniesToObManager = async (req, res) => {
       message: 'Companies assigned successfully'
     });
   } catch (error) {
-    console.error('Error assigning companies to OB Manager:', error);
     return res.status(500).json({ success: false, message: 'Failed to assign companies' });
   }
 };
@@ -280,7 +278,6 @@ exports.assignCompaniesToSbm = async (req, res) => {
       message: 'Companies assigned successfully'
     });
   } catch (error) {
-    console.error('Error assigning companies to SBM:', error);
     return res.status(500).json({ success: false, message: 'Failed to assign companies' });
   }
 };
@@ -324,7 +321,6 @@ exports.getCompanyUsers = async (req, res) => {
 
     return res.status(200).json({ success: true, data: mapped });
   } catch (error) {
-    console.error('Error fetching company users:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch company users' });
   }
 };
@@ -367,7 +363,6 @@ exports.getAssignmentsForCompany = async (req, res) => {
 
     return res.status(200).json({ success: true, data: mapped });
   } catch (error) {
-    console.error('Error fetching assignments for company:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch assignments' });
   }
 };
@@ -414,7 +409,6 @@ exports.getAssignmentsForUser = async (req, res) => {
           allCompanyTaskTypeIds = (types || []).map(t => t._id.toString());
         }
       } catch (err) {
-        console.error('Error fetching all task types for speed ecom:', err);
       }
     }
 
@@ -459,7 +453,6 @@ exports.getAssignmentsForUser = async (req, res) => {
 
     return res.status(200).json({ success: true, data: mapped });
   } catch (error) {
-    console.error('Error fetching assignments for user:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch assignments' });
   }
 };
@@ -671,7 +664,6 @@ exports.upsertAssignment = async (req, res) => {
         message: 'Duplicate assignment detected (check UserBrandTaskType unique indexes)'
       });
     }
-    console.error('Error upserting assignment:', error);
     return res.status(500).json({ success: false, message: 'Failed to save assignment' });
   }
 };
@@ -917,7 +909,6 @@ exports.bulkUpsertAssignments = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error bulk upserting assignments:', error);
     return res.status(500).json({ success: false, message: 'Failed to save assignments' });
   }
 };

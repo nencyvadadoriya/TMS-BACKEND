@@ -1539,7 +1539,7 @@ exports.updateUser = async (req, res) => {
         ).select('-password');
         try {
             const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
-            if (obj) emitUserUpserted({ ...obj, id: obj._id || obj.id });
+            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
         } catch (emitError) {
             console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
         }
