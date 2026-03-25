@@ -33,6 +33,8 @@ const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGo
 
 
 const { sendTaskAssignedEmail } = require('../middleware/email.message');
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination.util');
+
 
 
 
@@ -2276,590 +2278,169 @@ exports.addTask = async (req, res) => {
 
 
 exports.getAllTasks = async (req, res) => {
-
-
-
     try {
-
-
-
         const requesterRole = roleOf(req.user);
-
-
-
         const requesterEmail = normalizeEmail(req.user?.email);
+        const { page, limit, skip } = getPaginationParams(req.query);
+        const sortOrder = req.query.sort === 'asc' ? 1 : -1;
 
+        console.log('getAllTasks called by:', { requesterRole, requesterEmail, page, limit, sort: req.query.sort });
 
-
-
-
-
-
-        console.log('getAllTasks called by:', { requesterRole, requesterEmail });
-
-
-
-
-
-
-
-        let tasks;
-
-
+        let match = { isDeleted: { $ne: true } };
+        let roleMatch = [];
 
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
-
-
-
-            tasks = await Task.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean();
-
-
-
-            console.log('Admin fetching all tasks, count:', tasks.length);
-
-
-
+            // No additional filters for admins
         } else if (requesterRole === 'am') {
-
-
-
             const rmEmail = await resolveRmEmailForAmUser(req.user);
-
-
-
             const sharedEmails = Array.from(new Set([requesterEmail, rmEmail].filter(Boolean)));
-
-
-
-            tasks = await Task.find({
-
-
-
-                isDeleted: { $ne: true },
-
-
-
-                $or: [
-
-
-
-                    { assignedTo: { $in: sharedEmails } },
-
-
-
-                    { assignedBy: { $in: sharedEmails } }
-
-
-
-                ]
-
-
-
-            }).sort({ createdAt: -1 }).lean();
-
-
-
-            console.log('AM tasks, count:', tasks.length);
-
-
-
-        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
-
-
-
-            const scope = await resolveTaskScopeEmails(req.user);
-
-
-
-            const scopeEmails = Array.from(scope);
-
-
-
-            console.log('Scope emails for role', requesterRole, ':', scopeEmails);
-
-
-
-            if (scopeEmails.length === 0) {
-
-
-
-                tasks = [];
-
-
-
-            } else {
-
-
-
-                tasks = await Task.find({
-
-
-
-                    isDeleted: { $ne: true },
-
-
-
-                    $or: [
-
-
-
-                        { assignedTo: { $in: scopeEmails } },
-
-
-
-                        { assignedBy: { $in: scopeEmails } }
-
-
-
-                    ]
-
-
-
-                }).sort({ createdAt: -1 }).lean();
-
-
-
-            }
-
-
-
-            console.log('Tasks for scope, count:', tasks.length);
-
-
-
-        } else if (requesterRole === 'ob_manager') {
-
-
-
-            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
-
-
-
-            let requesterCompany = (req.user?.companyName || '').toString().trim();
-
-
-
-            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
-
-
-
-                const doc = await User.findById(requesterId).select('companyName').lean();
-
-
-
-                requesterCompany = (doc?.companyName || '').toString().trim();
-
-
-
-            }
-
-
-
-
-
-
-
-            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-
-
-            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
-
-
-
-
-
-
-
-            const teamRoles = [
-
-                'assistant',
-
-                'assistance',
-
-                'assistence',
-
-                'sub_assistance',
-
-                'sub_assistence',
-
-                'sub_assist',
-
-                'sub_assistant',
-
-                'sub-assistance',
-
-                'sub-assistence',
-
-                'sub-assist',
-
-                'sub-assistant',
-
-                'manager',
-
+            roleMatch = [
+                { assignedTo: { $in: sharedEmails } },
+                { assignedBy: { $in: sharedEmails } }
             ];
-
-
-
+        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(scope);
+            if (scopeEmails.length === 0) {
+                return res.json(formatPaginatedResponse([], 0, { page, limit }));
+            }
+            roleMatch = [
+                { assignedTo: { $in: scopeEmails } },
+                { assignedBy: { $in: scopeEmails } }
+            ];
+        } else if (requesterRole === 'ob_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+            const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
             const teamRoleRegex = /^(assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant|manager)$/i;
-
-
-
-            // Try to find team members by company + role
-
+            
             let assistantDocs = companySafe
-
                 ? await User.find({
-
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-
                     role: { $regex: teamRoleRegex }
-
                 }).select('email role companyName').lean()
-
                 : [];
-
-
-
-            // DEBUG: Log what we found
-
-            console.log('OB Manager - Company filter:', companySafe, 'Found assistants:', assistantDocs.length);
-
-            console.log('Assistant emails found:', assistantDocs.map(u => u.email));
-
-
-
-            // Fallback: if no assistants found by company, try role-only query
 
             if ((!assistantDocs || assistantDocs.length === 0) && requesterId) {
-
-                console.log('OB Manager - Fallback: searching all assistants by role only');
-
                 assistantDocs = await User.find({
-
                     role: { $regex: teamRoleRegex }
-
                 }).select('email role companyName').lean();
-
-                console.log('OB Manager - Fallback found assistants:', assistantDocs.length);
-
             }
-
-
-
-
-
-
 
             const assistantEmails = (assistantDocs || [])
-
-
-
                 .map((u) => normalizeEmail(u?.email))
-
-
-
                 .filter(Boolean);
-
-
 
             const emailToAssignedRegex = (email) => {
-
                 const e = normalizeEmail(email);
-
                 if (!e) return null;
-
                 const safe = escapeRegex(e);
-
                 return new RegExp(`^${safe}(?:\\.deleted\\..+)?$`, 'i');
-
             };
 
-
-
             const assignedRegexes = Array.from(
-
                 new Set([...(assistantEmails || []), requesterEmail].filter(Boolean).map((e) => normalizeEmail(e)))
-
             )
-
                 .map(emailToAssignedRegex)
-
                 .filter(Boolean);
 
-
-
-
-
-
-
-            const or = [];
-
-
-
-            if (assistantEmails.length > 0) or.push({ assignedTo: { $in: assistantEmails } });
-
+            if (assistantEmails.length > 0) roleMatch.push({ assignedTo: { $in: assistantEmails } });
             if (assignedRegexes.length > 0) {
-
-                or.push({ assignedTo: { $in: assignedRegexes } });
-
-                or.push({ assignedBy: { $in: assignedRegexes } });
-
+                roleMatch.push({ assignedTo: { $in: assignedRegexes } });
+                roleMatch.push({ assignedBy: { $in: assignedRegexes } });
             }
-
-
-
             if (requesterEmail) {
-
-
-
-                or.push({ obManagerEmail: requesterEmail });
-
-
-
-                or.push({ assignedTo: requesterEmail });
-
-
-
-                or.push({ assignedBy: requesterEmail });
-
-
-
+                roleMatch.push({ obManagerEmail: requesterEmail });
+                roleMatch.push({ assignedTo: requesterEmail });
+                roleMatch.push({ assignedBy: requesterEmail });
                 const r = emailToAssignedRegex(requesterEmail);
-
                 if (r) {
-
-                    or.push({ assignedTo: r });
-
-                    or.push({ assignedBy: r });
-
+                    roleMatch.push({ assignedTo: r });
+                    roleMatch.push({ assignedBy: r });
                 }
-
-
-
             }
-
-
-
-
-
-
-
-            if (or.length === 0) {
-
-
-
-                tasks = [];
-
-
-
-            } else {
-
-
-
-                tasks = await Task.find({
-
-
-
-                    isDeleted: { $ne: true },
-
-
-
-                    $or: or
-
-
-
-                }).sort({ createdAt: -1 }).lean();
-
-
-
+            if (roleMatch.length === 0) {
+                return res.json(formatPaginatedResponse([], 0, { page, limit }));
             }
-
-
-
-            console.log('OB Manager tasks, count:', tasks.length);
-
-            console.log('OB Manager - Tasks assignedTo:', tasks.map(t => t.assignedTo).slice(0, 10));
-
-
-
         } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
-
-
-
-            const scope = await resolveTaskScopeEmails(req.user);
-
-
-
             const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
-
             let requesterCompany = (req.user?.companyName || '').toString().trim();
-
             if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
-
                 const doc = await User.findById(requesterId).select('companyName').lean();
-
                 requesterCompany = (doc?.companyName || '').toString().trim();
-
             }
-
-
 
             const escapeRegex = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
             const companySafe = requesterCompany ? escapeRegex(requesterCompany) : '';
 
-
-
-            const teamRoles = [
-
-                'manager',
-
-                'assistant',
-
-                'assistance',
-
-                'assistence',
-
-                'sub_assistance',
-
-                'sub_assistence',
-
-                'sub_assist',
-
-                'sub_assistant',
-
-                'sub-assistance',
-
-                'sub-assistence',
-
-                'sub-assist',
-
-                'sub-assistant',
-
-            ];
-
-
-
-            const teamRoleRegex = /^(manager|assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant)$/i;
+            const teamRoleRegex = /^(md_manager|manager|assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant)$/i;
 
             const teamDocs = companySafe
-
                 ? await User.find({
-
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-
                     role: { $regex: teamRoleRegex }
-
                 }).select('email').lean()
-
                 : [];
-
-
 
             const teamEmails = (teamDocs || [])
-
                 .map((u) => normalizeEmail(u?.email))
-
                 .filter(Boolean);
-
-
 
             // Also include OB Managers from the same company so managers can see tasks assigned by them
-
             const obManagerDocs = companySafe
-
                 ? await User.find({
-
                     companyName: { $regex: `^${companySafe}$`, $options: 'i' },
-
                     role: { $regex: /^ob_manager$/i }
-
                 }).select('email').lean()
-
                 : [];
 
-
-
             const obManagerEmails = (obManagerDocs || [])
-
                 .map((u) => normalizeEmail(u?.email))
-
                 .filter(Boolean);
 
-
-
-            const scopeEmails = Array.from(new Set([...Array.from(scope), ...teamEmails, ...obManagerEmails].filter(Boolean)));
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(new Set([...Array.from(scope), ...teamEmails, ...obManagerEmails, requesterEmail].filter(Boolean)));
 
             console.log('Scope emails for role', requesterRole, ':', scopeEmails);
 
-
-
             if (scopeEmails.length === 0) {
-
-                tasks = [];
-
-            } else {
-
-                tasks = await Task.find({
-
-                    isDeleted: { $ne: true },
-
-                    $or: [
-
-                        { assignedTo: { $in: scopeEmails } },
-
-                        { assignedBy: { $in: scopeEmails } }
-
-                    ]
-
-                }).sort({ createdAt: -1 }).lean();
-
+                return res.json(formatPaginatedResponse([], 0, { page, limit }));
             }
-
-
-
-            console.log(`${requesterRole} tasks, count:`, tasks.length);
+            roleMatch = [
+                { assignedTo: { $in: scopeEmails } },
+                { assignedBy: { $in: scopeEmails } }
+            ];
 
 
 
         } else {
-
-
-
-            tasks = await Task.find({
-
-
-
-                isDeleted: { $ne: true },
-
-
-
-                $or: [
-
-
-
-                    { assignedTo: requesterEmail },
-
-
-
-                    { assignedBy: requesterEmail }
-
-
-
-                ]
-
-
-
-            }).sort({ createdAt: -1 }).lean();
-
-
-
-            console.log('Default tasks for', requesterEmail, ', count:', tasks.length);
-
-
-
+            // Default: user sees only tasks they are involved in
+            roleMatch = [
+                { assignedTo:   requesterEmail },
+                { assignedBy: requesterEmail }
+            ];
         }
+
+        // Apply roleMatch to the base match filter
+        if (roleMatch.length > 0) {
+            match.$or = roleMatch;
+        }
+
+        // Run paginated query
+        const totalCount = await Task.countDocuments(match);
+        const tasks = await Task.find(match)
+            .sort({ createdAt: sortOrder })
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        console.log(`getAllTasks [${requesterRole}]: total=${totalCount}, page=${page}, returned=${tasks.length}`);
+
 
 
 
@@ -2915,11 +2496,7 @@ exports.getAllTasks = async (req, res) => {
 
 
 
-                tasks
-
-
-
-                    .map((t) => (t?.brandId ? t.brandId.toString() : ''))
+                tasks.map((t) => (t?.brandId ? t.brandId.toString() : ''))
 
 
 
@@ -3129,31 +2706,17 @@ exports.getAllTasks = async (req, res) => {
 
         });
 
-
-
-
-
-
-
         return res.json({
-
-
-
             success: true,
-
-
-
             data: tasksWithUserDetails,
-
-
-
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                pages: Math.ceil(totalCount / limit)
+            },
             message: 'Tasks fetched successfully'
-
-
-
         });
-
-
 
     } catch (error) {
 
@@ -9304,10 +8867,23 @@ exports.getAssignedByMeTasks = async (req, res) => {
         if (!requesterEmail) {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
-        const tasks = await Task.find({ 
+        
+        const { page, limit, skip } = getPaginationParams(req.query);
+        
+        const match = { 
             assignedBy: requesterEmail,
             isDeleted: { $ne: true } 
-        }).sort({ createdAt: -1 }).lean();
+        };
+
+        const [tasks, total] = await Promise.all([
+            Task.find(match)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Task.countDocuments(match)
+        ]);
+
         const populatedTasks = tasks.map(task => ({
             ...task,
             id: task._id,
@@ -9317,6 +8893,12 @@ exports.getAssignedByMeTasks = async (req, res) => {
         res.json({
             success: true,
             data: populatedTasks,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
             message: 'Tasks fetched successfully'
         });
     } catch (error) {
@@ -9335,10 +8917,23 @@ exports.getAssignedToMeTasks = async (req, res) => {
         if (!requesterEmail) {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
-        const tasks = await Task.find({ 
+        
+        const { page, limit, skip } = getPaginationParams(req.query);
+        
+        const match = { 
             assignedTo: requesterEmail,
             isDeleted: { $ne: true } 
-        }).sort({ createdAt: -1 }).lean();
+        };
+
+        const [tasks, total] = await Promise.all([
+            Task.find(match)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Task.countDocuments(match)
+        ]);
+
         const populatedTasks = tasks.map(task => ({
             ...task,
             id: task._id,
@@ -9348,6 +8943,12 @@ exports.getAssignedToMeTasks = async (req, res) => {
         res.json({
             success: true,
             data: populatedTasks,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
             message: 'Tasks fetched successfully'
         });
     } catch (error) {

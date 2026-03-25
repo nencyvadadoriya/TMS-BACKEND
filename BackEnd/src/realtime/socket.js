@@ -50,12 +50,30 @@ function initSocket(server) {
             socket.join(`user:${userId}`);
             console.log(`User ${userId} joined their personal room: user:${userId}`);
             console.log('Rooms now:', Array.from(socket.rooms || []));
+            
+            // Notify others in company (or global) that user is online
+            if (companyKey) {
+                socket.to(`company:${companyKey}`).emit('user_online', userId);
+            } else {
+                socket.broadcast.emit('user_online', userId);
+            }
         }
 
         if (role === 'admin' || role === 'super_admin') {
             socket.join('role:admin-like');
             console.log(`Admin user joined admin room`);
         }
+
+        socket.on('get_online_users', (data, callback) => {
+            const onlineUsers = [];
+            const rooms = io.of('/').adapter.rooms;
+            for (const [roomName, socketIds] of rooms.entries()) {
+                if (roomName.startsWith('user:') && socketIds.size > 0) {
+                    onlineUsers.push(roomName.replace('user:', ''));
+                }
+            }
+            if (callback) callback(onlineUsers);
+        });
 
         // Handle sending messages
         socket.on('send_message', async (data, callback) => {
@@ -192,8 +210,19 @@ function initSocket(server) {
             }
         });
 
-        socket.on('disconnect', (reason) => {
+        socket.on('disconnect', async (reason) => {
             console.log('Socket disconnected:', socket.id, 'Reason:', reason);
+            if (userId) {
+                // Check if user still has other active sockets
+                const activeSockets = await io.in(`user:${userId}`).fetchSockets();
+                if (activeSockets.length === 0) {
+                    if (companyKey) {
+                        io.to(`company:${companyKey}`).emit('user_offline', userId);
+                    } else {
+                        io.emit('user_offline', userId);
+                    }
+                }
+            }
         });
     });
 

@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const mongoUrl = process.env.MONGODB_URI;
-console.log("MONGODB_URI", mongoUrl);
+// console.log("MONGODB_URI", mongoUrl);
 const db = mongoose.connection;
 
 const connectOptions = {
