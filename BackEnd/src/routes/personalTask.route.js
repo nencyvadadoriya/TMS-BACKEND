@@ -13,7 +13,6 @@ const router = express.Router();
 
 router.post('/', authMiddleware, createPersonalTask);
 router.get('/mine', authMiddleware, getMyPersonalTasks);
-router.patch('/:id', authMiddleware, updateMyPersonalTask);
 router.put('/:id', authMiddleware, updateMyPersonalTask);
 router.delete('/:id', authMiddleware, deleteMyPersonalTask);
 

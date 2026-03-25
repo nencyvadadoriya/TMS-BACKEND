@@ -87,6 +87,21 @@ exports.updateMyPersonalTask = async (req, res) => {
       { new: true }
     ).lean();
 
+    if (next) {
+      const responseData = { ...next, id: String(next._id) };
+      try {
+        const { getIO } = require('../realtime/socket');
+        const io = getIO();
+        const userId = next.creatorUserId || req.user?.id || req.user?._id;
+        if (userId) {
+          io.to(`user:${String(userId)}`).emit('personal:upserted', { task: responseData });
+          console.log(`[PersonalTask] Emitted personal:upserted update to user:${String(userId)}`);
+        }
+      } catch (socketErr) {
+        console.error('[PersonalTask] Failed to emit socket update:', socketErr.message);
+      }
+    }
+
     if (!next) {
       return res.status(404).json({ success: false, message: 'Personal task not found' });
     }
@@ -184,6 +199,23 @@ exports.createPersonalTask = async (req, res) => {
       creatorEmail,
       creatorUserId
     });
+
+    const responseData = {
+      ...created.toObject(),
+      id: String(created._id)
+    };
+
+    // Emit real-time sync for personal task
+    try {
+      const { getIO } = require('../realtime/socket');
+      const io = getIO();
+      if (creatorUserId) {
+        io.to(`user:${String(creatorUserId)}`).emit('personal:upserted', { task: responseData });
+        console.log(`[PersonalTask] Emitted personal:upserted to user:${String(creatorUserId)}`);
+      }
+    } catch (socketErr) {
+      console.error('[PersonalTask] Failed to emit socket event:', socketErr.message);
+    }
 
     return res.status(201).json({
       success: true,

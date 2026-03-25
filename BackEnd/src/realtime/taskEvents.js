@@ -13,14 +13,28 @@ function emitTaskUpserted(task) {
             task,
         };
 
+        console.log('[taskEvents] Emitting task:upserted', { 
+            taskId: payload.taskId, 
+            companyName, 
+            companyKey 
+        });
+
         const assigneeId = task && (task.assignedToUser && (task.assignedToUser.id || task.assignedToUser._id));
         if (assigneeId) {
-            io.to(`user:${assigneeId}`).emit('task:upserted', payload);
+            console.log(`[taskEvents] Targeting assignee room: user:${assigneeId}`);
+            io.to(`user:${String(assigneeId)}`).emit('task:upserted', payload);
         }
 
         const assignerId = task && (task.assignedByUser && (task.assignedByUser.id || task.assignedByUser._id));
         if (assignerId) {
-            io.to(`user:${assignerId}`).emit('task:upserted', payload);
+            console.log(`[taskEvents] Targeting assigner room: user:${assignerId}`);
+            io.to(`user:${String(assignerId)}`).emit('task:upserted', payload);
+        }
+
+        // Also broadcast to everyone in the same company room
+        if (companyKey) {
+            console.log(`[taskEvents] Targeting company room: company:${companyKey}`);
+            io.to(`company:${companyKey}`).emit('task:upserted', payload);
         }
 
         io.to('role:admin-like').emit('task:upserted', payload);

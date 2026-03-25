@@ -2029,19 +2029,44 @@ exports.addTask = async (req, res) => {
 
         const resolvedBrandName = brandName || '';
 
-
+        // Resolve user docs so emitTaskUpserted can target the correct socket rooms
+        let assignedToUserDoc = null;
+        let assignedByUserDoc = null;
+        try {
+            if (savedTask.assignedTo) {
+                assignedToUserDoc = await User.findOne({ email: savedTask.assignedTo })
+                    .select('_id email name avatar role').lean();
+            }
+            if (savedTask.assignedBy) {
+                assignedByUserDoc = await User.findOne({ email: savedTask.assignedBy })
+                    .select('_id email name avatar role').lean();
+            }
+        } catch { /* ignore */ }
 
         const responseData = {
 
             ...savedTask.toObject(),
 
-            id: savedTask._id,
+            id: String(savedTask._id),
+            _id: String(savedTask._id),
 
             brand: resolvedBrandName,
 
-            assignedToUser: { email: savedTask.assignedTo },
+            assignedToUser: assignedToUserDoc ? {
+                id: String(assignedToUserDoc._id),
+                name: assignedToUserDoc.name,
+                email: assignedToUserDoc.email,
+                avatar: assignedToUserDoc.avatar,
+                role: assignedToUserDoc.role,
+            } : { email: savedTask.assignedTo },
 
-            assignedByUser: { email: savedTask.assignedBy }
+            assignedByUser: assignedByUserDoc ? {
+                id: String(assignedByUserDoc._id),
+                name: assignedByUserDoc.name,
+                email: assignedByUserDoc.email,
+                avatar: assignedByUserDoc.avatar,
+                role: assignedByUserDoc.role,
+            } : { email: savedTask.assignedBy }
 
         };
 
@@ -2092,38 +2117,49 @@ exports.addTask = async (req, res) => {
                 });
 
                 // 3. Send notifications (Email/Push)
-                const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
-                const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
-
-                const toName = assignedToUser?.name || 'User';
-                const assignedByName = assignedByUser?.name || req.user?.name || 'User';
-
-                await sendTaskAssignedEmail({
-                    toEmail: savedTask.assignedTo,
-                    toName,
-                    assignedByName,
-                    assignedByEmail: assignedBy,
-                    task: {
-                        title: savedTask.title,
-                        priority: savedTask.priority,
-                        status: savedTask.status,
-                        companyName: savedTask.companyName,
-                        brand: resolvedBrandName || savedTask.brand,
-                        dueDate: savedTask.dueDate
-                    }
-                });
-
                 try {
-                    await sendTaskAssignedPush({
-                        toEmail: savedTask.assignedTo,
-                        task: savedTask,
-                        assignedByName
-                    });
-                } catch (pushErr) {
-                    console.error('Task assignment push failed:', pushErr?.message || pushErr);
+                    const assignedToUser = await User.findOne({ email: savedTask.assignedTo }).select('name').lean();
+                    const assignedByUser = await User.findOne({ email: savedTask.assignedBy }).select('name').lean();
+
+                    const toName = assignedToUser?.name || 'User';
+                    const assignedByName = assignedByUser?.name || req.user?.name || 'User';
+
+                    // Independent try/catch for Email
+                    try {
+                        await sendTaskAssignedEmail({
+                            toEmail: savedTask.assignedTo,
+                            toName,
+                            assignedByName,
+                            assignedByEmail: assignedBy,
+                            task: {
+                                title: savedTask.title,
+                                priority: savedTask.priority,
+                                status: savedTask.status,
+                                companyName: savedTask.companyName,
+                                brand: resolvedBrandName || savedTask.brand,
+                                dueDate: savedTask.dueDate
+                            }
+                        });
+                    } catch (emailErr) {
+                        console.error('[addTask] background email failed:', emailErr?.message || emailErr);
+                    }
+
+                    // Independent try/catch for Push
+                    try {
+                        console.log(`[addTask] background - sending push to ${savedTask.assignedTo}`);
+                        await sendTaskAssignedPush({
+                            toEmail: savedTask.assignedTo,
+                            task: savedTask,
+                            assignedByName
+                        });
+                    } catch (pushErr) {
+                        console.error('[addTask] background push failed:', pushErr?.message || pushErr);
+                    }
+                } catch (notifyErr) {
+                    console.error('[addTask] background notifications lookup failed:', notifyErr?.message || notifyErr);
                 }
             } catch (err) {
-                console.error('Background task operations failed:', err?.message || err);
+                console.error('[addTask] Background operations error:', err?.message || err);
             }
         });
 

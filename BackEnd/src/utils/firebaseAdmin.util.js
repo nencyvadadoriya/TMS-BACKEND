@@ -33,10 +33,19 @@ const initFirebaseAdmin = () => {
     throw new Error(`Failed to parse Firebase service account: ${e?.message || e}`);
   }
 
-  if (!credential) return null;
+  if (!credential) {
+    console.log('[firebaseAdmin] No credentials found (FIREBASE_SERVICE_ACCOUNT_JSON/BASE64 missing)');
+    return null;
+  }
 
-  admin.initializeApp({ credential });
-  return admin;
+  try {
+    admin.initializeApp({ credential });
+    console.log('[firebaseAdmin] Firebase Admin initialized for project:', JSON.parse(normalizeEnvValue(rawJson || '{}')).project_id || 'unknown');
+    return admin;
+  } catch (initErr) {
+    console.error('[firebaseAdmin] Initialization error:', initErr.message);
+    return null;
+  }
 };
 
 const getMessaging = () => {

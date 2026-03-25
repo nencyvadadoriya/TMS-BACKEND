@@ -30,8 +30,7 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
     tokens: tokenList,
     notification: {
       title,
-      body,
-      sound: 'default'
+      body
     },
     android: {
       notification: {
@@ -63,12 +62,16 @@ const sendTaskAssignedPush = async ({ toEmail, task, assignedByName }) => {
 
   const successCount = Number(resp?.successCount || 0);
   const failureCount = Number(resp?.failureCount || 0);
-  console.log('[push] sent multicast', {
+  console.log('[push] sending multicast', {
     toEmail: emailKey,
     taskId: task?._id ? String(task._id) : '',
     tokens: tokenList.length,
     successCount,
-    failureCount
+    failureCount,
+    errors: resp.responses.filter(r => !r.success).map(r => ({
+      code: r.error?.code,
+      message: r.error?.message
+    }))
   });
 
   const invalidTokens = [];
@@ -110,8 +113,7 @@ const sendChatMessagePush = async ({ toUserId, fromName, messageText, senderId }
     tokens: tokenList,
     notification: {
       title,
-      body,
-      sound: 'default'
+      body
     },
     android: {
       notification: {
@@ -185,8 +187,7 @@ const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }
     tokens: tokenList,
     notification: {
       title,
-      body,
-      sound: 'default'
+      body
     },
     android: {
       notification: {

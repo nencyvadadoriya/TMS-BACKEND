@@ -14,31 +14,44 @@ const lastRemindedTasks = new Map();
 async function checkPersonalTaskReminders() {
   try {
     const now = new Date();
+    const allPending = await PersonalTask.find({ 
+      status: { $ne: 'completed' }, 
+      reminderStyle: { $ne: 'none' } 
+    }).lean();
+    
+    // Add heartbeat log with pending count
+    if (now.getSeconds() === 0) {
+      console.log(`[PersonalReminder] Heartbeat. All pending reminders count: ${allPending.length}`);
+    }
+
     const currentMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
     const nextMinute = new Date(currentMinute.getTime() + 60000);
 
-    // Find tasks with 'once' reminder style where reminderAt is within this minute
-    const onceTasks = await PersonalTask.find({
-      reminderStyle: 'once',
-      reminderAt: {
-        $gte: currentMinute,
-        $lt: nextMinute
-      },
-      status: { $ne: 'completed' }
-    }).lean();
+    // Filter tasks locally to log details about why tasks are or aren't matching
+    const allTasks = allPending.filter(task => {
+      if (!task.reminderAt) return false;
+      const target = new Date(task.reminderAt);
+      
+      // Log for all tasks to see what we're comparing
+      if (now.getSeconds() === 0) {
+        console.log(`[PersonalReminder] Checking task: "${task.title}" | style: ${task.reminderStyle} | target: ${target.toISOString()} | now: ${now.toISOString()}`);
+      }
 
-    // Find tasks with recurring reminders (daily/weekly) that haven't been reminded today
-    const dailyTasks = await PersonalTask.find({
-      reminderStyle: 'daily',
-      status: { $ne: 'completed' }
-    }).lean();
+      if (task.reminderStyle === 'once') {
+         const isDue = target >= currentMinute && target < nextMinute;
+         return isDue;
+      }
+      
+      if (task.reminderStyle === 'daily') {
+         return target.getHours() === now.getHours() && target.getMinutes() === now.getMinutes();
+      }
 
-    const weeklyTasks = await PersonalTask.find({
-      reminderStyle: 'weekly',
-      status: { $ne: 'completed' }
-    }).lean();
+      if (task.reminderStyle === 'weekly') {
+         return target.getDay() === now.getDay() && target.getHours() === now.getHours() && target.getMinutes() === now.getMinutes();
+      }
 
-    const allTasks = [...onceTasks, ...dailyTasks, ...weeklyTasks];
+      return false;
+    });
 
     for (const task of allTasks) {
       const cacheKey = `${task._id}_${currentMinute.getTime()}`;
@@ -117,14 +130,13 @@ async function checkPersonalTaskReminders() {
         console.error('[PersonalReminder] Push error:', e);
       }
 
-      // Mark as reminded
-      lastRemindedTasks.set(cacheKey, true);
+      // Mark as reminded (store current wall-clock time for cleanup)
+      lastRemindedTasks.set(cacheKey, Date.now());
       
       // Clean up old cache entries (keep only last hour)
       const oneHourAgo = Date.now() - 3600000;
-      for (const [key, value] of lastRemindedTasks.entries()) {
-        const keyTime = parseInt(key.split('_')[1]);
-        if (keyTime < oneHourAgo) {
+      for (const [key, insertedAt] of lastRemindedTasks.entries()) {
+        if (insertedAt < oneHourAgo) {
           lastRemindedTasks.delete(key);
         }
       }
