@@ -135,4 +135,11 @@ const userSchema = new mongoose.Schema({
     }
 });
 
+// Indexes for optimizing queries
+userSchema.index({ role: 1 });
+userSchema.index({ managerId: 1 });
+userSchema.index({ companyName: 1 });
+userSchema.index({ assignedBrandIds: 1 });
+userSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('User', userSchema);

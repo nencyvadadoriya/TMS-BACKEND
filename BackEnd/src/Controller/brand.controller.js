@@ -50,33 +50,45 @@ const resolveAllowedCompanyNamesForUser = async (user) => {
     const startId = (user?.id || user?._id || '').toString();
     if (!mongoose.Types.ObjectId.isValid(startId)) return [];
 
-    let currentId = startId;
-    let fallbackCompany = '';
-    for (let depth = 0; depth < 8; depth++) {
-      const dbUser = await User.findById(currentId).select('assignedCompanyIds managerId companyName').lean();
-      if (!dbUser) return fallbackCompany ? [fallbackCompany] : [];
-
-      if (!fallbackCompany) {
-        fallbackCompany = (dbUser?.companyName || '').toString().trim();
+    const aggregation = await User.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(startId) } },
+      {
+        $graphLookup: {
+          from: "users",
+          startWith: "$managerId",
+          connectFromField: "managerId",
+          connectToField: "_id",
+          as: "hierarchy",
+          maxDepth: 7,
+          depthField: "depth"
+        }
       }
+    ]);
 
-      const companyIds = Array.isArray(dbUser?.assignedCompanyIds) ? dbUser.assignedCompanyIds : [];
-      if (companyIds.length > 0) {
-        const companies = await Company.find({
-          _id: { $in: companyIds },
-          isDeleted: { $ne: true }
-        }).select('name').lean();
+    if (!aggregation || !aggregation[0]) return [];
+    
+    const rootUser = aggregation[0];
+    const fallbackCompany = (rootUser?.companyName || '').toString().trim();
+    
+    // Check root user first
+    if (Array.isArray(rootUser.assignedCompanyIds) && rootUser.assignedCompanyIds.length > 0) {
+      const companies = await Company.find({ _id: { $in: rootUser.assignedCompanyIds }, isDeleted: { $ne: true } }).select('name').lean();
+      return companies.map((c) => (c?.name || '').toString().trim()).filter(Boolean);
+    }
 
-        return (companies || []).map((c) => (c?.name || '').toString().trim()).filter(Boolean);
+    // Check hierarchy (parents), sorted by proximity
+    const hierarchy = rootUser.hierarchy || [];
+    hierarchy.sort((a, b) => a.depth - b.depth);
+
+    for (const mgr of hierarchy) {
+      if (Array.isArray(mgr.assignedCompanyIds) && mgr.assignedCompanyIds.length > 0) {
+        const companies = await Company.find({ _id: { $in: mgr.assignedCompanyIds }, isDeleted: { $ne: true } }).select('name').lean();
+        return companies.map((c) => (c?.name || '').toString().trim()).filter(Boolean);
       }
-
-      const nextManagerId = (dbUser?.managerId || '').toString();
-      if (!mongoose.Types.ObjectId.isValid(nextManagerId)) return fallbackCompany ? [fallbackCompany] : [];
-      currentId = nextManagerId;
     }
 
     return fallbackCompany ? [fallbackCompany] : [];
-  } catch {
+  } catch (error) {
     return [];
   }
 };
@@ -90,24 +102,39 @@ const withAssignedBrandIds = async (user) => {
     if (!mongoose.Types.ObjectId.isValid(id)) return user;
 
     const assignedBrandIds = new Set();
-    let managerId = null;
-    let currentId = id;
     const maxDepth = role === 'rm' || role === 'am' ? 1 : 8;
-    for (let depth = 0; depth < maxDepth; depth++) {
-      const dbUser = await User.findById(currentId).select('assignedBrandIds managerId').lean();
-      if (!dbUser) break;
 
-      (Array.isArray(dbUser?.assignedBrandIds) ? dbUser.assignedBrandIds : [])
-        .map(String)
-        .filter(Boolean)
-        .forEach((bid) => assignedBrandIds.add(bid));
+    const aggregation = await User.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(id) } },
+      {
+        $graphLookup: {
+          from: "users",
+          startWith: "$managerId",
+          connectFromField: "managerId",
+          connectToField: "_id",
+          as: "hierarchy",
+          maxDepth: maxDepth - 1
+        }
+      }
+    ]);
 
-      managerId = managerId || dbUser?.managerId || null;
+    if (!aggregation || !aggregation[0]) return user;
+    
+    const rootUser = aggregation[0];
+    const managerId = rootUser.managerId || null;
 
-      const nextManagerId = (dbUser?.managerId || '').toString();
-      if (!mongoose.Types.ObjectId.isValid(nextManagerId)) break;
-      currentId = nextManagerId;
-    }
+    // Collect from root
+    (Array.isArray(rootUser.assignedBrandIds) ? rootUser.assignedBrandIds : []).forEach(b => {
+      if (b) assignedBrandIds.add(b.toString());
+    });
+    
+    // Collect from managers
+    const hierarchy = rootUser.hierarchy || [];
+    hierarchy.forEach(mgr => {
+      (Array.isArray(mgr.assignedBrandIds) ? mgr.assignedBrandIds : []).forEach(b => {
+        if (b) assignedBrandIds.add(b.toString());
+      });
+    });
 
     let allowedCompanyNames = undefined;
     if (role === 'md_manager') {
@@ -120,7 +147,7 @@ const withAssignedBrandIds = async (user) => {
       managerId: user?.managerId || managerId || null,
       allowedCompanyNames
     };
-  } catch {
+  } catch (error) {
     return user;
   }
 };

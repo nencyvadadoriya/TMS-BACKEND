@@ -998,14 +998,29 @@ exports.getAllUsers = async (req, res) => {
             query = { _id: requesterId };
         }
 
-        const users = await User.find(query)
-            .select('-password -resetOtp -otpExpiry')
-            .sort({ createdAt: -1 });
+        // Pagination support
+        const page = parseInt(req.query?.page) || 1;
+        const limit = parseInt(req.query?.limit) || 1000; // default to 1000 to remain backward compatible if no limit is passed initially
+        const skip = (page - 1) * limit;
+
+        const [users, total] = await Promise.all([
+            User.find(query)
+                .select('-password -resetOtp -otpExpiry')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            User.countDocuments(query)
+        ]);
 
         res.status(200).json({
             success: true,
             message: 'Users fetched successfully',
             count: users.length,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
             data: users
         });
 

@@ -2393,13 +2393,6 @@ exports.getAllTasks = async (req, res) => {
 
         console.log(`getAllTasks [${requesterRole}]: total=${totalCount}, page=${page}, returned=${tasks.length}`);
 
-
-
-
-
-
-
-
         const emails = Array.from(
 
 
