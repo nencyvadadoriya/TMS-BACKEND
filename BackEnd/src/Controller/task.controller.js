@@ -5197,7 +5197,10 @@ exports.updateTask = async (req, res) => {
 
                 const isObManager = requesterRole === 'ob_manager';
 
-                const isAllowedAssignee = isAssignee && !isObManager;
+                // Allow ob_manager to update status if they are the assignee OR the assigner
+                const isAllowedObManager = isObManager && (isAssignee || isAssigner);
+
+                const isAllowedAssignee = (isAssignee && !isObManager) || isAllowedObManager;
 
                 if (!isAdmin && !isAssigner && !isAllowedAssignee) {
 
