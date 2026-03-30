@@ -19,5 +19,6 @@ route.use("/manager-monthly-rankings", require("./managerMonthlyRanking.route"))
 route.use("/power-star-monthly", require("./powerStarMonthly.route"))
 route.use("/md-impex-access", require("./mdImpexAccess.route"))
 route.use("/headline", require("./headline.route"))
+route.use("/meetings", require("./meeting.route"))
 
 module.exports = route;
