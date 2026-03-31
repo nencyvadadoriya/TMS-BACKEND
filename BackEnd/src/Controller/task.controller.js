@@ -1738,18 +1738,27 @@ function canSubmitTaskReview(user) {
 
     const r = roleOf(user);
 
+    const email = normalizeEmail(user?.email);
+    const smartbizReviewerEmails = new Set([
+        'miteshsmartbiz@gmail.com',
+        'mitixasmartbiz@gmail.com',
+        'viralsmartbiz@gmail.com',
+        'smartbizishita@gmail.com',
+    ]);
 
 
-    return r === 'admin' || r === 'super_admin' || r === 'manager' || r === 'marketer_manager' || r === 'md_manager' || r === 'ob_manager';
+
+    return r === 'admin'
+        || r === 'super_admin'
+        || r === 'manager'
+        || r === 'marketer_manager'
+        || r === 'md_manager'
+        || r === 'ob_manager'
+        || (email && smartbizReviewerEmails.has(email));
 
 
 
 }
-
-
-
-
-
 
 
 exports.addTask = async (req, res) => {
@@ -2222,13 +2231,6 @@ exports.addTask = async (req, res) => {
 
 
 };
-
-
-
-
-
-
-
 exports.getAllTasks = async (req, res) => {
     try {
         const requesterRole = roleOf(req.user);
@@ -2681,12 +2683,6 @@ exports.getAllTasks = async (req, res) => {
 
 };
 
-
-
-
-
-
-
 exports.getSingleTask = async (req, res) => {
 
 
@@ -2928,13 +2924,6 @@ exports.getSingleTask = async (req, res) => {
 
 
 };
-
-
-
-
-
-
-
 exports.addTaskComment = async (req, res) => {
 
 
@@ -3159,12 +3148,6 @@ exports.addTaskComment = async (req, res) => {
 
 };
 
-
-
-
-
-
-
 exports.getTaskComments = async (req, res) => {
 
 
@@ -3290,12 +3273,6 @@ exports.getTaskComments = async (req, res) => {
 
 
 };
-
-
-
-
-
-
 
 exports.deleteTaskComment = async (req, res) => {
 
@@ -3593,12 +3570,6 @@ exports.deleteTaskComment = async (req, res) => {
 
 };
 
-
-
-
-
-
-
 exports.addTaskHistory = async (req, res) => {
 
 
@@ -3832,13 +3803,6 @@ exports.addTaskHistory = async (req, res) => {
 
 
 };
-
-
-
-
-
-
-
 exports.getTaskHistory = async (req, res) => {
 
 
@@ -3980,13 +3944,6 @@ exports.getTaskHistory = async (req, res) => {
 
 
 };
-
-
-
-
-
-
-
 exports.inviteToTask = async (req, res) => {
 
 
@@ -4241,16 +4198,7 @@ exports.inviteToTask = async (req, res) => {
 
 };
 
-
-
-
-
-
-
 // 4. UPDATE TASK
-
-
-
 exports.updateTask = async (req, res) => {
 
 
@@ -6171,13 +6119,6 @@ exports.updateTask = async (req, res) => {
 
 
 };
-
-
-
-
-
-
-
 exports.getTaskReviews = async (req, res) => {
 
 
