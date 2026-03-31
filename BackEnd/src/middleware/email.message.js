@@ -475,3 +475,103 @@ exports.testEmailService = async (testEmail = 'test@example.com') => {
     
     return result;
 };
+
+exports.sendStrikeAssignedEmail = async ({ toEmail, toName = 'User', assignedByName = 'User', assignedByEmail, strikeTitle, reason, date, time }) => {
+    try {
+        const safeTo = (toEmail || '').toString().trim().toLowerCase();
+        
+        if (!safeTo) {
+            return false;
+        }
+
+        const fromAddress = process.env.EMAIL_FROM || process.env.USER_EMAIL;
+        const usingSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+
+        if (usingSendGrid) {
+            if (!process.env.SENDGRID_API_KEY) {
+                return false;
+            }
+            if (!fromAddress) {
+                return false;
+            }
+        } else {
+            if (!process.env.USER_EMAIL || !process.env.USER_PASS_KEY) {
+                return false;
+            }
+        }
+
+        if (!transporter) {
+            transporter = createTransporter();
+        }
+
+        if (!transporter) {
+            return false;
+        }
+
+        const fromLine = assignedByEmail ? `${assignedByName} (${assignedByEmail})` : assignedByName;
+
+        const detailsText = `Strike Title: ${strikeTitle || '-'}\n`
+            + (reason ? `Reason: ${reason}\n` : '')
+            + (date ? `Date: ${new Date(date).toLocaleDateString()}\n` : '')
+            + (time ? `Time: ${time}\n` : '');
+
+        const mailOptions = {
+            from: {
+                name: 'Task Management System',
+                address: fromAddress
+            },
+            replyTo: assignedByEmail || undefined,
+            to: safeTo,
+            subject: `Strike Notification: ${strikeTitle || 'Strike'}`,
+            html: `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>New Strike Assigned</title>
+                </head>
+                <body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;">
+                    <div style="max-width: 600px; margin: 20px auto; background: white; border-radius: 10px; overflow: hidden;">
+                        <div style="background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%); color: white; padding: 30px; text-align: center;">
+                            <h1 style="margin: 0; font-size: 24px;">⛔ Strike Notification</h1>
+                            <p style="margin: 10px 0 0 0; opacity: 0.9;">Task Management System</p>
+                        </div>
+                        <div style="padding: 30px;">
+                            <h2 style="color: #333; margin-top: 0;">Hello ${toName},</h2>
+                            <p style="color: #555; line-height: 1.6; font-size: 16px;">
+                                A strike has been recorded by <strong>${fromLine}</strong>.
+                            </p>
+                            <div style="background: #fff5f5; border: 1px solid #feb2b2; border-radius: 10px; padding: 20px; margin: 20px 0;">
+                                <p style="margin: 0 0 10px 0; color: #333;"><strong>Title:</strong> ${strikeTitle || '-'} </p>
+                                ${reason ? `<p style="margin: 0 0 10px 0; color: #333;"><strong>Reason:</strong> ${reason}</p>` : ''}
+                                ${date ? `<p style="margin: 0 0 10px 0; color: #333;"><strong>Date:</strong> ${new Date(date).toLocaleDateString()}</p>` : ''}
+                                ${time ? `<p style="margin: 0 0 10px 0; color: #333;"><strong>Time:</strong> ${time}</p>` : ''}
+                            </div>
+                            <p style="color: #666; font-size: 14px; border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
+                                This is an automated email. Please do not reply.
+                            </p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `,
+            text: `
+                STRIKE NOTIFICATION
+                =================
+
+                Hello ${toName},
+
+                A strike has been recorded by ${fromLine}.
+
+                ${detailsText}
+            `
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+
+        return { success: true, info };
+    } catch (error) {
+        return false;
+    }
+};

@@ -233,8 +233,78 @@ const sendTaskReminderPush = async ({ toEmail, task, fromName, reminderMessage }
   }
 };
 
+const sendStrikeAssignedPush = async ({ toEmail, strikeTitle, assignedByName }) => {
+  const emailKey = normalizeEmail(toEmail);
+  if (!emailKey) return;
+
+  const tokens = await DeviceToken.find({
+    userEmail: emailKey,
+    revoked: { $ne: true }
+  })
+    .select('token')
+    .lean();
+
+  const tokenList = (tokens || []).map((t) => (t?.token || '').toString().trim()).filter(Boolean);
+  if (tokenList.length === 0) {
+    console.log('[push] no tokens for userEmail:', emailKey);
+    return;
+  }
+
+  const title = 'Strike Notification';
+  const body = `${strikeTitle || 'A strike'} recorded by ${assignedByName || 'manager'}`;
+  const url = '/login';
+
+  const payload = {
+    tokens: tokenList,
+    notification: {
+      title,
+      body
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        channelId: 'default'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default'
+        }
+      }
+    },
+    data: {
+      title,
+      body,
+      url,
+      kind: 'strike_notification'
+    }
+  };
+
+  const messaging = getMessaging();
+  if (!messaging) {
+    console.log('[push] skipped (firebase not configured) for userEmail:', emailKey);
+    return;
+  }
+  const resp = await messaging.sendEachForMulticast(payload);
+
+  const invalidTokens = [];
+  (resp.responses || []).forEach((r, idx) => {
+    if (r.success) return;
+    const code = r.error?.code || '';
+    if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+      invalidTokens.push(tokenList[idx]);
+    }
+  });
+
+  if (invalidTokens.length > 0) {
+    await DeviceToken.updateMany({ token: { $in: invalidTokens } }, { $set: { revoked: true, lastSeenAt: new Date() } });
+  }
+};
+
 module.exports = {
   sendTaskAssignedPush,
   sendTaskReminderPush,
-  sendChatMessagePush
+  sendChatMessagePush,
+  sendStrikeAssignedPush
 };
