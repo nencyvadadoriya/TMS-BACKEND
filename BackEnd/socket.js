@@ -13,7 +13,7 @@ const initializeSocket = (httpServer) => {
       methods: ["GET", "POST"],
       credentials: true
     }
-  });
+});
 
   // Authentication middleware for Socket.io
   io.use(async (socket, next) => {
