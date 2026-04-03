@@ -367,6 +367,7 @@ exports.getAllPersonAccess = async (req, res) => {
         accessRoleKey: p.accessRole?.key || '',
         allowedAssignees: (p.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(p.allowedTaskTypes) ? p.allowedTaskTypes : [],
+        allowedBrands: Array.isArray(p.allowedBrands) ? p.allowedBrands : [],
         createdAt: p.createdAt,
         updatedAt: p.updatedAt
       })),
@@ -390,7 +391,8 @@ exports.createPersonAccess = async (req, res) => {
       assignedToRole,
       accessRole,
       allowedAssignees = [],
-      allowedTaskTypes = []
+      allowedTaskTypes = [],
+      allowedBrands = []
     } = req.body || {};
 
     console.log('[DEBUG] createPersonAccess received:', { assignedToEmail, assignedToRole, accessRole, allowedAssignees, allowedTaskTypes });
@@ -426,6 +428,10 @@ exports.createPersonAccess = async (req, res) => {
       ? allowedTaskTypes.map((v) => normalizeText(v).toLowerCase()).filter(Boolean)
       : [];
 
+    const normalizedAllowedBrands = Array.isArray(allowedBrands)
+      ? allowedBrands.map((v) => normalizeText(v)).filter(Boolean)
+      : [];
+
     const createdBy = {
       id: req.user?.id || req.user?._id,
       name: req.user?.name,
@@ -439,6 +445,7 @@ exports.createPersonAccess = async (req, res) => {
       accessRole: roleDoc?._id || null,
       allowedAssignees: resolvedAllowedAssigneeIds,
       allowedTaskTypes: Array.from(new Set(normalizedAllowedTaskTypes)),
+      allowedBrands: Array.from(new Set(normalizedAllowedBrands)),
       companyName: 'MD Impex',
       createdBy
     });
@@ -454,6 +461,7 @@ exports.createPersonAccess = async (req, res) => {
         accessRoleKey: roleDoc?.key || '',
         allowedAssignees: (newPersonAccess.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(newPersonAccess.allowedTaskTypes) ? newPersonAccess.allowedTaskTypes : [],
+        allowedBrands: Array.isArray(newPersonAccess.allowedBrands) ? newPersonAccess.allowedBrands : [],
         createdAt: newPersonAccess.createdAt
       },
       message: 'Person access created successfully'
@@ -478,7 +486,7 @@ exports.createPersonAccess = async (req, res) => {
 exports.updatePersonAccess = async (req, res) => {
   try {
     const { id } = req.params;
-    const { accessRole, allowedAssignees = [], allowedTaskTypes = [] } = req.body || {};
+    const { accessRole, allowedAssignees = [], allowedTaskTypes = [], allowedBrands = [] } = req.body || {};
 
     if (!id) {
       return res.status(400).json({
@@ -509,6 +517,11 @@ exports.updatePersonAccess = async (req, res) => {
       : [];
     updateData.allowedTaskTypes = Array.from(new Set(normalizedAllowedTaskTypes));
 
+    const normalizedAllowedBrands = Array.isArray(allowedBrands)
+      ? allowedBrands.map((v) => normalizeText(v)).filter(Boolean)
+      : [];
+    updateData.allowedBrands = Array.from(new Set(normalizedAllowedBrands));
+
     const updated = await PersonAccess.findByIdAndUpdate(
       id,
       {
@@ -536,6 +549,7 @@ exports.updatePersonAccess = async (req, res) => {
         accessRoleKey: updated.accessRole?.key || '',
         allowedAssignees: (updated.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(updated.allowedTaskTypes) ? updated.allowedTaskTypes : [],
+        allowedBrands: Array.isArray(updated.allowedBrands) ? updated.allowedBrands : [],
         updatedAt: updated.updatedAt
       },
       message: 'Person access updated successfully'

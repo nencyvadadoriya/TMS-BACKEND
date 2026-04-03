@@ -7,10 +7,15 @@ const normalizeText = (v) => (v == null ? '' : String(v)).trim();
 
 exports.createStrike = async (req, res) => {
   try {
-    const { date, time, pocEmail, brandName, strikeTitle, company, reason } = req.body;
+    const { date, time, pocEmail, brandName, strikeTitle, company, reason, strikeType } = req.body;
 
     if (!date || !time || !pocEmail || !strikeTitle || !reason) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const normalizedStrikeType = normalizeText(strikeType).toLowerCase() || 'small';
+    if (!['small', 'big'].includes(normalizedStrikeType)) {
+      return res.status(400).json({ success: false, message: 'Invalid strike type' });
     }
 
     // Role check is handled by middleware, but we can double check or get user info
@@ -31,6 +36,7 @@ exports.createStrike = async (req, res) => {
         email: pocUser.email
       },
       brandName,
+      strikeType: normalizedStrikeType,
       strikeTitle,
       assignBy: {
         name: assignedByName,
@@ -107,6 +113,14 @@ exports.updateStrike = async (req, res) => {
     
     // Only allow specific updates
     if (updateData.date) updateData.date = new Date(updateData.date);
+
+    if (Object.prototype.hasOwnProperty.call(updateData, 'strikeType')) {
+      const normalizedStrikeType = normalizeText(updateData.strikeType).toLowerCase() || 'small';
+      if (!['small', 'big'].includes(normalizedStrikeType)) {
+        return res.status(400).json({ success: false, message: 'Invalid strike type' });
+      }
+      updateData.strikeType = normalizedStrikeType;
+    }
 
     if (updateData.pocEmail) {
       const pocUser = await User.findOne({ email: updateData.pocEmail.toLowerCase() }).select('name email').lean();

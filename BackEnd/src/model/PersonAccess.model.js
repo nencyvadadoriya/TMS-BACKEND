@@ -32,6 +32,11 @@ const PersonAccessSchema = new mongoose.Schema({
     default: [],
     trim: true,
   },
+  allowedBrands: {
+    type: [String],
+    default: [],
+    trim: true,
+  },
   companyName: {
     type: String,
     required: true,

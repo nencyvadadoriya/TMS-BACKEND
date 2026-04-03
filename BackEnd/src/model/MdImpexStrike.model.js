@@ -9,6 +9,7 @@ const MdImpexStrikeSchema = new mongoose.Schema(
       email: { type: String, required: true }
     },
     brandName: { type: String },
+    strikeType: { type: String, enum: ['small', 'big'], default: 'small' },
     strikeTitle: { type: String, required: true },
     assignBy: {
       name: { type: String },
