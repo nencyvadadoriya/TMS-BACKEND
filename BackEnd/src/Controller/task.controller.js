@@ -13,6 +13,8 @@ const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagin
 
 const { sendTaskAssignedPush } = require('../utils/pushNotifications.util');
 const { emitTaskUpserted } = require('../realtime/taskEvents');
+const { backgroundQueue } = require('../utils/bullmqConfig');
+
 const managerAllowedBrandIdSet = async (user) => {
     try {
        const u = user || {};
@@ -2133,36 +2135,37 @@ exports.addTask = async (req, res) => {
                     const toName = assignedToUser?.name || 'User';
                     const assignedByName = assignedByUser?.name || req.user?.name || 'User';
 
-                    // Independent try/catch for Email
+                    // Dispatch directly to BullMQ background worker for detached asynchronous execution
                     try {
-                        await sendTaskAssignedEmail({
-                            toEmail: savedTask.assignedTo,
-                            toName,
-                            assignedByName,
-                            assignedByEmail: assignedBy,
-                            task: {
-                                title: savedTask.title,
-                                priority: savedTask.priority,
-                                status: savedTask.status,
-                                companyName: savedTask.companyName,
-                                brand: resolvedBrandName || savedTask.brand,
-                                dueDate: savedTask.dueDate
-                            }
-                        });
-                    } catch (emailErr) {
-                        console.error('[addTask] background email failed:', emailErr?.message || emailErr);
-                    }
-
-                    // Independent try/catch for Push
-                    try {
-                        console.log(`[addTask] background - sending push to ${savedTask.assignedTo}`);
-                        await sendTaskAssignedPush({
-                            toEmail: savedTask.assignedTo,
-                            task: savedTask,
-                            assignedByName
-                        });
-                    } catch (pushErr) {
-                        console.error('[addTask] background push failed:', pushErr?.message || pushErr);
+                        if (backgroundQueue) {
+                            await backgroundQueue.add('task_assigned_notifications', {
+                                emailPayload: {
+                                    toEmail: savedTask.assignedTo,
+                                    toName,
+                                    assignedByName,
+                                    assignedByEmail: assignedBy,
+                                    task: {
+                                        title: savedTask.title,
+                                        priority: savedTask.priority,
+                                        status: savedTask.status,
+                                        companyName: savedTask.companyName,
+                                        brand: resolvedBrandName || savedTask.brand,
+                                        dueDate: savedTask.dueDate
+                                    }
+                                },
+                                pushPayload: {
+                                    toEmail: savedTask.assignedTo,
+                                    task: savedTask,
+                                    assignedByName
+                                }
+                            }, {
+                                removeOnComplete: true,
+                                removeOnFail: false
+                            });
+                            console.log(`[addTask] BullMQ dispatched push/email notifications for ${savedTask.assignedTo}`);
+                        }
+                    } catch (queueErr) {
+                        console.error('[addTask] BullMQ dispatch failed:', queueErr?.message || queueErr);
                     }
                 } catch (notifyErr) {
                     console.error('[addTask] background notifications lookup failed:', notifyErr?.message || notifyErr);
@@ -2240,7 +2243,14 @@ exports.getAllTasks = async (req, res) => {
 
         console.log('getAllTasks called by:', { requesterRole, requesterEmail, page, limit, sort: req.query.sort });
 
-        let match = { isDeleted: { $ne: true } };
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+        let match = { 
+            isDeleted: { $ne: true },
+            completedApproval: { $ne: true },
+            createdAt: { $gte: twoMonthsAgo }
+        };
         let roleMatch = [];
 
         if (requesterRole === 'admin' || requesterRole === 'super_admin') {
@@ -8757,9 +8767,14 @@ exports.getAssignedByMeTasks = async (req, res) => {
         
         const { page, limit, skip } = getPaginationParams(req.query);
         
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
         const match = { 
             assignedBy: requesterEmail,
-            isDeleted: { $ne: true } 
+            isDeleted: { $ne: true },
+            completedApproval: { $ne: true },
+            createdAt: { $gte: twoMonthsAgo }
         };
 
         const [tasks, total] = await Promise.all([
@@ -8806,9 +8821,14 @@ exports.getAssignedToMeTasks = async (req, res) => {
         
         const { page, limit, skip } = getPaginationParams(req.query);
         
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
         const match = { 
             assignedTo: requesterEmail,
-            isDeleted: { $ne: true } 
+            isDeleted: { $ne: true },
+            completedApproval: { $ne: true },
+            createdAt: { $gte: twoMonthsAgo }
         };
 
         const [tasks, total] = await Promise.all([

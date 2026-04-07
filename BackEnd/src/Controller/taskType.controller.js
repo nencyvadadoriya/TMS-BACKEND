@@ -1,6 +1,18 @@
 const mongoose = require('mongoose');
 const TaskType = require('../model/TaskType.model');
 const Company = require('../model/Company.model');
+const redisClient = require('../utils/redisClient');
+
+const clearTaskTypeCache = async () => {
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            const keys = await redisClient.keys('*:taskTypes');
+            if (keys.length > 0) await redisClient.del(keys);
+        }
+    } catch (e) {
+        console.warn('[Redis] TaskType cache clear error:', e.message);
+    }
+};
 
 const normalizeName = (v) => (v || '').toString().trim();
 const normalizeText = (v) => (v || '').toString().trim();
@@ -38,11 +50,24 @@ exports.getTaskTypes = async (req, res) => {
       companyName: req.query?.companyName
     });
 
+    const cacheKey = companyId ? `company:${companyId}:taskTypes` : `global:taskTypes`;
+
+    if (redisClient && redisClient.status === 'ready') {
+      const cached = await redisClient.get(cacheKey);
+      if (cached) return res.status(200).json(JSON.parse(cached));
+    }
+
     const query = {};
     if (companyId) query.companyId = companyId;
 
     const types = await TaskType.find(query).sort({ name: 1 }).lean();
-    res.status(200).json({ success: true, data: types.map(t => formatTaskType(t)) });
+    const responseData = { success: true, data: types.map(t => formatTaskType(t)) };
+
+    if (redisClient && redisClient.status === 'ready') {
+      await redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 86400); // Cache for 24h
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     console.error('Error fetching task types:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch task types' });
@@ -75,6 +100,8 @@ exports.createTaskType = async (req, res) => {
       createdBy: actorId,
       updatedBy: actorId
     });
+
+    await clearTaskTypeCache();
 
     res.status(201).json({ success: true, data: formatTaskType(created.toObject()) });
   } catch (error) {
@@ -124,6 +151,8 @@ exports.bulkUpsertTaskTypes = async (req, res) => {
       results.push({ clientId: raw?.clientId || raw?.id || '', ...formatTaskType(doc.toObject()) });
     }
 
+    await clearTaskTypeCache();
+
     res.status(200).json({ success: true, data: results });
   } catch (error) {
     console.error('Error bulk upserting task types:', error);
@@ -142,6 +171,8 @@ exports.deleteTaskType = async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ success: false, message: 'Task type not found' });
     }
+
+    await clearTaskTypeCache();
 
     res.status(200).json({ success: true, message: 'Task type deleted successfully' });
   } catch (error) {

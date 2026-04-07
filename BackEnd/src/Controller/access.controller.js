@@ -3,6 +3,30 @@ const UserPermission = require('../model/UserPermission.model');
 const User = require('../model/user.model');
 const Role = require('../model/Role.model');
 const { ensureDefaultModules } = require('../middleware/permission.middleware');
+const redisClient = require('../utils/redisClient');
+
+const clearUserCache = async (userId) => {
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            const keys = await redisClient.keys(`user:${userId}:perm:*`);
+            if (keys.length > 0) await redisClient.del(keys);
+        }
+    } catch (e) {
+        console.warn('[Redis] Cache clear error:', e.message);
+    }
+};
+
+const clearGlobalCache = async () => {
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            const keys = await redisClient.keys(`user:*:perm:*`);
+            if (keys.length > 0) await redisClient.del(keys);
+        }
+    } catch (e) {
+        console.warn('[Redis] Global cache clear error:', e.message);
+    }
+};
+
 
 const permissionEnum = new Set(['allow', 'deny', 'own', 'team']);
 
@@ -98,6 +122,8 @@ exports.createRole = async (req, res) => {
             await AccessModule.bulkWrite(bulk, { ordered: false });
         }
 
+        await clearGlobalCache();
+
         return res.json({ success: true, data: roleDoc });
     } catch (e) {
         const message = e?.code === 11000 ? 'Role already exists' : 'Failed to create role';
@@ -135,6 +161,8 @@ exports.updateRole = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Role not found' });
         }
 
+        await clearGlobalCache();
+
         return res.json({ success: true, data: doc });
     } catch {
         return res.status(500).json({ success: false, message: 'Failed to update role' });
@@ -167,6 +195,8 @@ exports.deleteRole = async (req, res) => {
         await User.updateMany({ role: key }, { $set: { role: 'assistant' } });
         await AccessModule.updateMany({}, { $unset: { [`defaults.${key}`]: "" } });
         await Role.deleteOne({ _id: doc._id });
+
+        await clearGlobalCache();
 
         return res.json({ success: true });
     } catch {
@@ -235,6 +265,8 @@ exports.createModule = async (req, res) => {
             }
         });
 
+        await clearGlobalCache();
+
         return res.json({ success: true, data: doc });
     } catch (e) {
         const message = e?.code === 11000 ? 'Module already exists' : 'Failed to create module';
@@ -264,6 +296,9 @@ exports.updateModule = async (req, res) => {
 
         const doc = await AccessModule.findOneAndUpdate({ moduleId }, update, { new: true });
         if (!doc) return res.status(404).json({ success: false, message: 'Module not found' });
+        
+        await clearGlobalCache();
+        
         return res.json({ success: true, data: doc });
     } catch {
         return res.status(500).json({ success: false, message: 'Failed to update module' });
@@ -286,6 +321,9 @@ exports.deleteModule = async (req, res) => {
         if (!mod) return res.status(404).json({ success: false, message: 'Module not found' });
 
         await UserPermission.deleteMany({ moduleId });
+        
+        await clearGlobalCache();
+        
         return res.json({ success: true });
     } catch {
         return res.status(500).json({ success: false, message: 'Failed to delete module' });
@@ -372,6 +410,8 @@ exports.setUserPermission = async (req, res) => {
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
 
+        await clearUserCache(userId);
+
         return res.json({ success: true, data: doc });
     } catch (e) {
         return res.status(500).json({ success: false, message: 'Failed to update permission' });
@@ -427,6 +467,8 @@ exports.applyTemplateToUser = async (req, res) => {
         if (ops.length > 0) {
             await UserPermission.bulkWrite(ops, { ordered: false });
         }
+
+        await clearUserCache(userId);
 
         // Notify target user (if online) so their client can refresh permissions
         try {

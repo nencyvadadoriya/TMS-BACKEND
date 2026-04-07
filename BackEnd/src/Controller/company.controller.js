@@ -1,6 +1,19 @@
 const mongoose = require('mongoose');
 const Company = require('../model/Company.model');
 const User = require('../model/user.model');
+const redisClient = require('../utils/redisClient');
+
+const clearCompanyCache = async () => {
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            await redisClient.del('global:companies');
+            const keys = await redisClient.keys('user:*:allowedCompanies');
+            if (keys.length > 0) await redisClient.del(keys);
+        }
+    } catch (e) {
+        console.warn('[Redis] Company cache clear error:', e.message);
+    }
+};
 
 const normalizeName = (v) => (v || '').toString().trim();
 
@@ -11,8 +24,19 @@ const formatCompany = (c) => ({
 
 exports.getCompanies = async (req, res) => {
   try {
+    if (redisClient && redisClient.status === 'ready') {
+      const cached = await redisClient.get('global:companies');
+      if (cached) return res.status(200).json(JSON.parse(cached));
+    }
+
     const companies = await Company.find({ isDeleted: { $ne: true } }).sort({ name: 1 }).lean();
-    res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
+    const responseData = { success: true, data: companies.map(c => formatCompany(c)) };
+    
+    if (redisClient && redisClient.status === 'ready') {
+      await redisClient.set('global:companies', JSON.stringify(responseData), 'EX', 86400); // Cache globally for 24h
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to fetch companies' });
   }
@@ -22,6 +46,12 @@ exports.getAllowedCompanies = async (req, res) => {
   try {
     const role = String(req.user?.role || '').toLowerCase();
     const userId = (req.user?.id || req.user?._id || '').toString();
+    const cacheKey = `user:${userId}:allowedCompanies`;
+
+    if (redisClient && redisClient.status === 'ready') {
+      const cached = await redisClient.get(cacheKey);
+      if (cached) return res.status(200).json(JSON.parse(cached));
+    }
 
     const resolveAssignedCompanyIdsForUser = async (startUserId) => {
       if (!mongoose.Types.ObjectId.isValid(startUserId)) return [];
@@ -47,18 +77,24 @@ exports.getAllowedCompanies = async (req, res) => {
     if (role === 'md_manager' || role === 'ob_manager' || role === 'manager' || role === 'assistant' || role === 'sbm') {
       const companyIds = await resolveAssignedCompanyIdsForUser(userId);
       if (companyIds.length === 0) {
-        return res.status(200).json({ success: true, data: [] });
+        const emptyData = { success: true, data: [] };
+        if (redisClient && redisClient.status === 'ready') await redisClient.set(cacheKey, JSON.stringify(emptyData), 'EX', 3600);
+        return res.status(200).json(emptyData);
       }
 
       const companies = await Company.find({ _id: { $in: companyIds }, isDeleted: { $ne: true } })
         .sort({ name: 1 })
         .lean();
 
-      return res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
+      const responseData = { success: true, data: companies.map(c => formatCompany(c)) };
+      if (redisClient && redisClient.status === 'ready') await redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 3600);
+      return res.status(200).json(responseData);
     }
 
     const companies = await Company.find({ isDeleted: { $ne: true } }).sort({ name: 1 }).lean();
-    return res.status(200).json({ success: true, data: companies.map(c => formatCompany(c)) });
+    const responseDataGlobal = { success: true, data: companies.map(c => formatCompany(c)) };
+    if (redisClient && redisClient.status === 'ready') await redisClient.set(cacheKey, JSON.stringify(responseDataGlobal), 'EX', 3600);
+    return res.status(200).json(responseDataGlobal);
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Failed to fetch companies' });
   }
@@ -124,6 +160,8 @@ exports.createCompany = async (req, res) => {
       }]
     });
 
+    await clearCompanyCache();
+
     res.status(201).json({ success: true, data: formatCompany(created.toObject()) });
   } catch (error) {
     if (error?.code === 11000) {
@@ -160,6 +198,8 @@ exports.bulkUpsertCompanies = async (req, res) => {
 
       results.push({ clientId: raw?.clientId || raw?.id || '', ...formatCompany(doc.toObject()) });
     }
+
+    await clearCompanyCache();
 
     res.status(200).json({ success: true, data: results });
   } catch (error) {
@@ -208,6 +248,8 @@ exports.updateCompany = async (req, res) => {
       },
       { new: true }
     ).lean();
+
+    await clearCompanyCache();
 
     res.status(200).json({ success: true, data: formatCompany(updated) });
   } catch (error) {
@@ -258,6 +300,8 @@ exports.deleteCompany = async (req, res) => {
       },
       { new: true }
     );
+
+    await clearCompanyCache();
 
     res.status(200).json({ success: true, message: 'Company deleted successfully' });
   } catch (error) {

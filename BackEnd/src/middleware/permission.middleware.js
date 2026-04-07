@@ -2,6 +2,7 @@ const AccessModule = require('../model/AccessModule.model');
 const UserPermission = require('../model/UserPermission.model');
 const User = require('../model/user.model');
 const Role = require('../model/Role.model');
+const redisClient = require('../utils/redisClient');
 
 const permissionEnum = new Set(['allow', 'deny']);
 
@@ -195,25 +196,50 @@ const ensureDefaultModules = async () => {
 };
 
 const getEffectivePermissionForUser = async (userId, moduleId) => {
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            const cachedPerm = await redisClient.get(`user:${userId}:perm:${moduleId}`);
+            if (cachedPerm) return cachedPerm;
+        }
+    } catch (e) {
+        console.warn('[Redis] Cache get error:', e.message);
+    }
+
     await ensureDefaultModules();
 
     const user = await User.findById(userId).select('role');
     if (!user) return 'deny';
 
     const override = await UserPermission.findOne({ userId, moduleId }).select('value');
-    if (override?.value && permissionEnum.has(override.value)) return override.value;
+    let effective = 'deny';
 
-    const mod = await AccessModule.findOne({ moduleId }).select('defaults');
-    if (!mod) return 'deny';
+    if (override?.value && permissionEnum.has(override.value)) {
+        effective = override.value;
+    } else {
+        const mod = await AccessModule.findOne({ moduleId }).select('defaults');
+        if (mod) {
+            const role = String(user.role || '').toLowerCase().replace(/[\s-]+/g, '_');
+            const roleKeyToCheck = role === 'marketer_manager' ? 'manager' : role;
+            const fallback = (mod.defaults && typeof mod.defaults.get === 'function')
+                ? mod.defaults.get(roleKeyToCheck)
+                : (mod.defaults && mod.defaults[roleKeyToCheck])
+                    ? mod.defaults[roleKeyToCheck]
+                    : 'deny';
+            if (permissionEnum.has(fallback)) {
+                effective = fallback;
+            }
+        }
+    }
 
-    const role = String(user.role || '').toLowerCase().replace(/[\s-]+/g, '_');
-    const roleKeyToCheck = role === 'marketer_manager' ? 'manager' : role;
-    const fallback = (mod.defaults && typeof mod.defaults.get === 'function')
-        ? mod.defaults.get(roleKeyToCheck)
-        : (mod.defaults && mod.defaults[roleKeyToCheck])
-            ? mod.defaults[roleKeyToCheck]
-            : 'deny';
-    return permissionEnum.has(fallback) ? fallback : 'deny';
+    try {
+        if (redisClient && redisClient.status === 'ready') {
+            await redisClient.set(`user:${userId}:perm:${moduleId}`, effective, 'EX', 3600);
+        }
+    } catch (e) {
+        console.warn('[Redis] Cache set error:', e.message);
+    }
+
+    return effective;
 };
 
 const requireModulePermission = (moduleId) => {

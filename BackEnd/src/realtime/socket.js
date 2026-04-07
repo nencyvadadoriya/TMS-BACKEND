@@ -1,7 +1,8 @@
 const { Server } = require('socket.io');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const redisClient = require('../utils/redisClient');
 
 const ChatMessage = require('../model/ChatMessage.model');
-
 const { sendChatMessagePush } = require('../utils/pushNotifications.util');
 
 let io;
@@ -22,6 +23,22 @@ function initSocket(server) {
             credentials: true,
         },
     });
+
+    if (redisClient) {
+        try {
+            // The adapter requires dedicated connection pooling that never aborts even if Redis drops momentarily
+            const pubClient = redisClient.duplicate({ maxRetriesPerRequest: null });
+            const subClient = redisClient.duplicate({ maxRetriesPerRequest: null });
+            
+            pubClient.on('error', () => {}); // Swallow silent network dropping
+            subClient.on('error', () => {}); 
+
+            io.adapter(createAdapter(pubClient, subClient));
+            console.log('[Socket.IO] Configured Redis horizontal scaling adapter successfully.');
+        } catch (e) {
+            console.error('[Socket.IO] Redis adapter failed to attach:', e.message);
+        }
+    }
 
     io.on('connection', (socket) => {
         console.log('New socket connection established');
