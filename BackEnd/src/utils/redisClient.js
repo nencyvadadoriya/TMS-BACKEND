@@ -2,42 +2,51 @@ const Redis = require('ioredis');
 
 const redisUrl = process.env.REDIS_URL;
 
-const redisOptions = {
-    maxRetriesPerRequest: 1,
-    enableReadyCheck: true,
-    // Retry strategy to prevent crashing the server if Redis goes down intermittently
-    retryStrategy(times) {
-        if (times > 3) {
-            console.warn('[Redis] Connection retries exhausted. System will fallback to native MongoDB operations.');
-            return null; // Stop retrying, allow graceful DB fallback
+// If REDIS_URL is not set (e.g. on Render without a Redis service),
+// skip creating a client entirely and export null.
+// All consumers must check `if (redisClient && redisClient.status === 'ready')`
+// before calling Redis — they already do this, so this is safe.
+if (!redisUrl) {
+    console.warn('[Redis] REDIS_URL is not set. Redis is disabled — falling back to native MongoDB operations.');
+    module.exports = null;
+} else {
+    const redisOptions = {
+        maxRetriesPerRequest: 1,
+        enableReadyCheck: true,
+        // Retry strategy to prevent crashing the server if Redis goes down intermittently
+        retryStrategy(times) {
+            if (times > 3) {
+                console.warn('[Redis] Connection retries exhausted. System will fallback to native MongoDB operations.');
+                return null; // Stop retrying
+            }
+            return Math.min(times * 500, 2000);
         }
-        return Math.min(times * 500, 2000);
-    }
-};
-
-// Required for connecting to most cloud Redis providers (e.g., Upstash, Render, Heroku)
-if (redisUrl && redisUrl.startsWith('rediss://')) {
-    redisOptions.tls = {
-        rejectUnauthorized: false
     };
-}
 
-const redisClient = new Redis(redisUrl, redisOptions);
-
-redisClient.on('connect', () => {
-    console.log('[Redis] Connected successfully');
-});
-
-let errorLogged = false;
-redisClient.on('error', (err) => {
-    if (!errorLogged) {
-        console.error('[Redis] Connection Error:', err.message);
-        errorLogged = true;
+    // Required for TLS cloud Redis providers (Upstash, Render Redis, Heroku)
+    if (redisUrl.startsWith('rediss://')) {
+        redisOptions.tls = {
+            rejectUnauthorized: false
+        };
     }
-});
 
-redisClient.on('reconnecting', () => {
-    errorLogged = false;
-});
+    const redisClient = new Redis(redisUrl, redisOptions);
 
-module.exports = redisClient;
+    redisClient.on('connect', () => {
+        console.log('[Redis] Connected successfully');
+    });
+
+    let errorLogged = false;
+    redisClient.on('error', (err) => {
+        if (!errorLogged) {
+            console.error('[Redis] Connection Error:', err.message);
+            errorLogged = true;
+        }
+    });
+
+    redisClient.on('reconnecting', () => {
+        errorLogged = false;
+    });
+
+    module.exports = redisClient;
+}

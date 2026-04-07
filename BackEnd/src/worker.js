@@ -10,6 +10,12 @@ console.log("===================================");
 console.log("⚙️  Starting Dedicated Background Worker...");
 console.log("===================================");
 
+// If Redis is not configured, skip starting the BullMQ worker entirely.
+if (!redisClient) {
+    console.warn('[BullMQ Worker] Redis not available (REDIS_URL missing) — worker process will not start. Exiting gracefully.');
+    process.exit(0);
+}
+
 const connection = redisClient.duplicate({ maxRetriesPerRequest: null });
 
 const backgroundWorker = new Worker('backgroundJobs', async job => {
