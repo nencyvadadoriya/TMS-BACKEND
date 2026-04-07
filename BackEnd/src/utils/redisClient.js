@@ -16,7 +16,7 @@ const redisOptions = {
 };
 
 // Required for connecting to most cloud Redis providers (e.g., Upstash, Render, Heroku)
-if (redisUrl.startsWith('rediss://')) {
+if (redisUrl && redisUrl.startsWith('rediss://')) {
     redisOptions.tls = {
         rejectUnauthorized: false
     };
