@@ -30,15 +30,19 @@ function initSocket(server) {
             const pubClient = redisClient.duplicate({ maxRetriesPerRequest: null });
             const subClient = redisClient.duplicate({ maxRetriesPerRequest: null });
             
-            pubClient.on('error', () => {}); // Swallow silent network dropping
-            subClient.on('error', () => {}); 
-
+            pubClient.on('error', (err) => console.error('[Socket.IO] Redis Pub Error:', err.message));
+            subClient.on('error', (err) => console.error('[Socket.IO] Redis Sub Error:', err.message));
             io.adapter(createAdapter(pubClient, subClient));
             console.log('[Socket.IO] Configured Redis horizontal scaling adapter successfully.');
         } catch (e) {
             console.error('[Socket.IO] Redis adapter failed to attach:', e.message);
         }
     }
+
+    // Capture adapter/engine errors to prevent them from bubbling up to process.on('uncaughtException')
+    io.on('error', (err) => {
+        console.error('[Socket.IO] Server Error:', err.message);
+    });
 
     io.on('connection', (socket) => {
         console.log('New socket connection established');

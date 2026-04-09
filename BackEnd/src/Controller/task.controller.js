@@ -2505,7 +2505,7 @@ exports.getAllTasks = async (req, res) => {
 
 
 
-                    .select('_id name')
+                    .select('_id name groupNumber company')
 
 
 
@@ -2581,6 +2581,30 @@ exports.getAllTasks = async (req, res) => {
 
 
 
+            const brandDetails = brandDoc ? {
+
+
+
+                id: brandDoc._id.toString(),
+
+
+
+                name: brandDoc.name,
+
+
+
+                groupNumber: brandDoc.groupNumber,
+
+
+
+                company: brandDoc.company
+
+
+
+            } : null;
+
+
+
 
 
 
@@ -2598,6 +2622,10 @@ exports.getAllTasks = async (req, res) => {
 
 
                 brand: resolvedBrandName,
+
+
+
+                brandDetails,
 
 
 

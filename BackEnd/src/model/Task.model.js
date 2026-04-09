@@ -168,12 +168,12 @@ taskSchema.index({ obManagerEmail: 1 });
 taskSchema.index({ completedApproval: 1 });
 taskSchema.index({ reviewStars: 1 });
 taskSchema.index({ reviewedAt: -1 });
-taskSchema.index({ brandId: 1 });
-taskSchema.index({ brand: 1 });
-taskSchema.index({ createdAt: -1 });
-taskSchema.index({ isDeleted: 1, createdAt: -1 });
-taskSchema.index({ assignedTo: 1, createdAt: -1 });
-taskSchema.index({ assignedBy: 1, createdAt: -1 });
+taskSchema.index({ companyName: 1 });
+taskSchema.index({ taskType: 1 });
+taskSchema.index({ isDeleted: 1, completedApproval: 1, createdAt: -1 });
+taskSchema.index({ assignedTo: 1, isDeleted: 1, completedApproval: 1, createdAt: -1 });
+taskSchema.index({ assignedBy: 1, isDeleted: 1, completedApproval: 1, createdAt: -1 });
+taskSchema.index({ obManagerEmail: 1, isDeleted: 1, completedApproval: 1, createdAt: -1 });
 taskSchema.index({ 'googleSync.taskId': 1 });
 taskSchema.index({ 'googleSync.taskId': 1, 'googleSync.ownerEmail': 1 });
 

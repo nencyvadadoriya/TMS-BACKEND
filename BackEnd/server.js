@@ -35,22 +35,28 @@ const PORT = process.env.PORT || 9001;
 
 
 process.on("uncaughtException", (err) => {
+  // Common network/socket errors that shouldn't crash a real-time server
+  const ignoreCodes = ["ECONNRESET", "ECONNABORTED", "EPIPE"];
+  if (ignoreCodes.includes(err.code)) {
+    console.warn(`⚠️  Transient Network Error (${err.code}):`, err.message);
+    return;
+  }
 
   console.error("❌ Uncaught Exception:", err);
-
   process.exit(1);
-
 });
 
+process.on("unhandledRejection", (reason, promise) => {
+  // Handle rejected promises gracefully
+  if (reason && (reason.code === "ECONNRESET" || reason.code === "ECONNABORTED" || reason.code === "EPIPE")) {
+    console.warn("⚠️  Unhandled Promise Rejection (Network):", reason.message);
+    return;
+  }
 
-
-process.on("unhandledRejection", (err) => {
-
-  console.error("❌ Unhandled Rejection:", err);
-
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
   process.exit(1);
-
 });
+
 
 
 

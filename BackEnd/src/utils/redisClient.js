@@ -11,13 +11,15 @@ if (!redisUrl) {
     module.exports = null;
 } else {
     const redisOptions = {
-        maxRetriesPerRequest: 1,
+        maxRetriesPerRequest: null,
         enableReadyCheck: true,
         // Retry strategy to prevent crashing the server if Redis goes down intermittently
         retryStrategy(times) {
             if (times > 3) {
-                console.warn('[Redis] Connection retries exhausted. System will fallback to native MongoDB operations.');
-                return null; // Stop retrying
+                if (times === 4) {
+                    console.warn('[Redis] Connection retries exhausted. System will fallback to native MongoDB operations. (Retrying silently in background)');
+                }
+                return 5000; // Keep retrying every 5 seconds to prevent ioredis unhandled rejection crash
             }
             return Math.min(times * 500, 2000);
         }

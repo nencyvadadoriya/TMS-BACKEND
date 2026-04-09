@@ -325,6 +325,7 @@ brandSchema.index({ status: 1 });
 brandSchema.index({ isDeleted: 1 });
 brandSchema.index({ deletedAt: 1 });
 brandSchema.index({ owner: 1, isDeleted: 1 });
+brandSchema.index({ company: 1, isDeleted: 1 }); // Added for Speed Ecom performance
 
 const Brand = mongoose.model('Brand', brandSchema);
 
