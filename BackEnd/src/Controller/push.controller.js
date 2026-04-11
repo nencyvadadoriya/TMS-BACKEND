@@ -16,6 +16,7 @@ exports.registerDeviceToken = async (req, res) => {
       return res.status(400).json({ success: false, message: 'token and deviceId are required' });
     }
 
+    // Always store userEmail so push lookups by email always find this token
     const set = {
       deviceId,
       platform,
@@ -28,20 +29,22 @@ exports.registerDeviceToken = async (req, res) => {
       set.userEmail = userEmail;
     }
 
+    const setOnInsert = { userId: null };
+    if (userEmail) {
+      // Only set on insert if not already set — $set above handles updates
+      setOnInsert.userEmail = userEmail;
+    }
+
     const doc = await DeviceToken.findOneAndUpdate(
       { token },
-      {
-        $set: set,
-        $setOnInsert: {
-          userId: null,
-          userEmail: userEmail || null
-        }
-      },
+      { $set: set, $setOnInsert: setOnInsert },
       { new: true, upsert: true }
     ).lean();
 
+    console.log(`[push] registerDeviceToken: token registered for email=${userEmail || '(none)'}, deviceId=${deviceId}`);
     return res.status(200).json({ success: true, data: { id: doc?._id }, message: 'Device token registered' });
   } catch (e) {
+    console.error('[push] registerDeviceToken error:', e?.message);
     return res.status(500).json({ success: false, message: e?.message || 'Failed to register device token' });
   }
 };
@@ -73,18 +76,29 @@ exports.testPush = async (req, res) => {
       });
     }
 
+    const messaging = getMessaging();
+    if (!messaging) {
+      return res.status(503).json({ success: false, message: 'Firebase not configured' });
+    }
+
+    // Must include `notification` block — data-only messages are invisible on Android/iOS background
     const payload = {
       tokens: tokenList,
-      data: {
-        title,
-        body,
-        url,
-        kind: 'test'
-      }
+      notification: { title, body },
+      android: { notification: { sound: 'default', channelId: 'default' } },
+      apns: { payload: { aps: { sound: 'default' } } },
+      data: { title, body, url, kind: 'test' }
     };
 
-    const messaging = getMessaging();
     const resp = await messaging.sendEachForMulticast(payload);
+
+    console.log('[push] testPush result:', {
+      toEmail: userEmail,
+      tokens: tokenList.length,
+      successCount: resp?.successCount,
+      failureCount: resp?.failureCount,
+      errors: (resp?.responses || []).filter(r => !r.success).map(r => r.error?.code)
+    });
 
     return res.status(200).json({
       success: true,
@@ -96,6 +110,7 @@ exports.testPush = async (req, res) => {
       }
     });
   } catch (e) {
+    console.error('[push] testPush error:', e?.message);
     return res.status(500).json({ success: false, message: e?.message || 'Failed to send test push' });
   }
 };
@@ -116,22 +131,25 @@ exports.linkDeviceToUser = async (req, res) => {
       return res.status(400).json({ success: false, message: 'deviceId or token is required' });
     }
 
+    // Match by token first (most specific), then fallback to deviceId
     const filter = token ? { token } : { deviceId };
 
-    await DeviceToken.updateMany(
+    const result = await DeviceToken.updateMany(
       filter,
       {
         $set: {
           userId,
-          userEmail,
+          userEmail,  // Always stamp email so push lookups by email work
           revoked: false,
           lastSeenAt: new Date()
         }
       }
     );
 
+    console.log(`[push] linkDeviceToUser: linked ${result.modifiedCount} token(s) to ${userEmail}`);
     return res.status(200).json({ success: true, message: 'Device linked to user' });
   } catch (e) {
+    console.error('[push] linkDeviceToUser error:', e?.message);
     return res.status(500).json({ success: false, message: e?.message || 'Failed to link device' });
   }
 };
