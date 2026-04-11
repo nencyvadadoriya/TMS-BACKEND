@@ -15,57 +15,77 @@ function normalizeCompanyKey(value) {
 }
 
 function initSocket(server) {
-    
+
     io = new Server(server, {
         cors: {
             origin: '*',
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
             credentials: true,
         },
+        // Increase ping intervals so connections don't die silently on slow networks
+        pingTimeout: 60000,
+        pingInterval: 25000,
+        // Allow upgrade fallback to long-polling when WebSocket is blocked
+        transports: ['websocket', 'polling'],
     });
 
     if (redisClient) {
         try {
-            // The adapter requires dedicated connection pooling that never aborts even if Redis drops momentarily
             const pubClient = redisClient.duplicate({ maxRetriesPerRequest: null });
             const subClient = redisClient.duplicate({ maxRetriesPerRequest: null });
-            
+
             pubClient.on('error', (err) => console.error('[Socket.IO] Redis Pub Error:', err.message));
             subClient.on('error', (err) => console.error('[Socket.IO] Redis Sub Error:', err.message));
+
+            pubClient.on('connect', () => console.log('[Socket.IO] Redis pub client connected'));
+            subClient.on('connect', () => console.log('[Socket.IO] Redis sub client connected'));
+
+            pubClient.on('reconnecting', () => console.warn('[Socket.IO] Redis pub reconnecting…'));
+            subClient.on('reconnecting', () => console.warn('[Socket.IO] Redis sub reconnecting…'));
+
+            // Re-attach adapter after reconnection so rooms keep working
+            pubClient.on('ready', () => {
+                console.log('[Socket.IO] Redis pub client ready');
+            });
+            subClient.on('ready', () => {
+                console.log('[Socket.IO] Redis sub client ready');
+            });
+
             io.adapter(createAdapter(pubClient, subClient));
             console.log('[Socket.IO] Configured Redis horizontal scaling adapter successfully.');
         } catch (e) {
             console.error('[Socket.IO] Redis adapter failed to attach:', e.message);
+            console.warn('[Socket.IO] Falling back to in-process adapter (single instance only).');
         }
+    } else {
+        console.warn('[Socket.IO] Redis not available — using in-process adapter (single instance, no horizontal scaling).');
     }
 
-    // Capture adapter/engine errors to prevent them from bubbling up to process.on('uncaughtException')
     io.on('error', (err) => {
         console.error('[Socket.IO] Server Error:', err.message);
     });
 
     io.on('connection', (socket) => {
-        console.log('New socket connection established');
-        console.log('Socket ID:', socket.id);
-        
         const auth = socket.handshake.auth || {};
 
-        const userId = (auth.userId || '').toString();
+        const userId = (auth.userId || '').toString().trim();
         const role = (auth.role || '').toString().trim().toLowerCase();
-        const companyName = (auth.companyName || '').toString();
-
+        const companyName = (auth.companyName || '').toString().trim();
         const companyKey = normalizeCompanyKey(companyName);
+
+        console.log(`[Socket.IO] New connection: socketId=${socket.id}, userId=${userId || '(none)'}, role=${role}, company=${companyKey || '(none)'}`);
 
         if (companyKey) {
             socket.join(`company:${companyKey}`);
+            console.log(`[Socket.IO] Joined company room: company:${companyKey}`);
+        } else {
+            console.warn(`[Socket.IO] ⚠️  userId=${userId} connected with NO companyName — will not join a company room. Task events emitted to company rooms will be missed!`);
         }
 
         if (userId) {
             socket.join(`user:${userId}`);
-            console.log(`User ${userId} joined their personal room: user:${userId}`);
-            console.log('Rooms now:', Array.from(socket.rooms || []));
-            
-            // Notify others in company (or global) that user is online
+            console.log(`[Socket.IO] Joined personal room: user:${userId}. All rooms: ${Array.from(socket.rooms).join(', ')}`);
+
             if (companyKey) {
                 socket.to(`company:${companyKey}`).emit('user_online', userId);
             } else {
@@ -75,6 +95,7 @@ function initSocket(server) {
 
         if (role === 'admin' || role === 'super_admin') {
             socket.join('role:admin-like');
+            console.log(`[Socket.IO] Joined admin room: role:admin-like`);
         }
 
         socket.on('get_online_users', (data, callback) => {
@@ -88,9 +109,7 @@ function initSocket(server) {
             if (callback) callback(onlineUsers);
         });
 
-        // Handle sending messages
         socket.on('send_message', async (data, callback) => {
-            
             try {
                 const { receiverId, content } = data;
                 const senderId = userId;
@@ -99,11 +118,9 @@ function initSocket(server) {
                 const senderEmail = (data?.senderEmail || auth.userEmail || 'unknown@example.com').toString();
 
                 if (!receiverId || !content) {
-                    console.log('Invalid message data:', { receiverId, content });
                     return callback({ error: 'Receiver ID and content are required' });
                 }
 
-                // Persist message
                 const doc = await ChatMessage.create({
                     senderId,
                     senderName,
@@ -144,17 +161,11 @@ function initSocket(server) {
                         senderId: senderId,
                     });
                 } catch (e) {
+                    // push notification failure is non-critical
                 }
 
-                // Send to receiver if they're online
-                const receiverSockets = await io.in(`user:${receiverId}`).fetchSockets();
-                
-                if (receiverSockets.length > 0) {
-                    io.to(`user:${receiverId}`).emit('new_message', message);
-                } else {
-                }
+                io.to(`user:${receiverId}`).emit('new_message', message);
 
-                // Send confirmation to sender
                 callback(message);
 
             } catch (error) {
@@ -163,7 +174,6 @@ function initSocket(server) {
             }
         });
 
-        // Handle getting chat history
         socket.on('get_chat_history', async (data, callback) => {
             try {
                 const { userId: peerUserId, page = 1, limit = 50 } = data;
@@ -207,9 +217,8 @@ function initSocket(server) {
         });
 
         socket.on('disconnect', async (reason) => {
-            console.log('Socket disconnected:', socket.id, 'Reason:', reason);
+            console.log(`[Socket.IO] Socket ${socket.id} (userId=${userId}) disconnected. Reason: ${reason}`);
             if (userId) {
-                // Check if user still has other active sockets
                 const activeSockets = await io.in(`user:${userId}`).fetchSockets();
                 if (activeSockets.length === 0) {
                     if (companyKey) {
