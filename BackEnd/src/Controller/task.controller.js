@@ -8893,3 +8893,204 @@ exports.getAssignedToMeTasks = async (req, res) => {
         });
     }
 };
+
+exports.requestCustomAnalysisReport = async (req, res) => {
+    try {
+        if (!backgroundQueue) {
+            return res.status(503).json({ success: false, message: 'Background worker not configured (redis disabled).' });
+        }
+
+        const requesterRole = roleOf(req.user);
+        const requesterEmail = normalizeEmail(req.user?.email);
+
+        let match = {
+            isDeleted: { $ne: true },
+            completedApproval: { $ne: true },
+        };
+        const { startDate, endDate } = req.body;
+        if (startDate || endDate) {
+            match.createdAt = {};
+            if (startDate) {
+                const s = new Date(startDate);
+                if (!isNaN(s)) match.createdAt.$gte = s;
+            }
+            if (endDate) {
+                const e = new Date(endDate);
+                e.setHours(23, 59, 59, 999);
+                if (!isNaN(e)) match.createdAt.$lte = e;
+            }
+        }
+
+        let roleMatch = [];
+        if (requesterRole === 'admin' || requesterRole === 'super_admin') {
+            // No additional filters
+        } else if (requesterRole === 'am') {
+            const rmEmail = await resolveRmEmailForAmUser(req.user);
+            const sharedEmails = Array.from(new Set([requesterEmail, rmEmail].filter(Boolean)));
+            roleMatch = [
+                { assignedTo: { $in: sharedEmails } },
+                { assignedBy: { $in: sharedEmails } }
+            ];
+        } else if (requesterRole === 'sbm' || requesterRole === 'rm' || requesterRole === 'ar') {
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(scope);
+            if (scopeEmails.length === 0) {
+                return res.json({ success: true, jobId: null, status: 'empty_scope' });
+            }
+            roleMatch = [
+                { assignedTo: { $in: scopeEmails } },
+                { assignedBy: { $in: scopeEmails } }
+            ];
+        } else if (requesterRole === 'ob_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+            const escapeRegexConst = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegexConst(requesterCompany) : '';
+            const teamRoleRegex = /^(assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant|manager)$/i;
+            
+            let assistantDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $regex: teamRoleRegex }
+                }).select('email role companyName').lean()
+                : [];
+
+            if ((!assistantDocs || assistantDocs.length === 0) && requesterId) {
+                assistantDocs = await User.find({
+                    role: { $regex: teamRoleRegex }
+                }).select('email role companyName').lean();
+            }
+            const assistantEmails = (assistantDocs || []).map((u) => normalizeEmail(u?.email)).filter(Boolean);
+            const emailToAssignedRegex = (email) => {
+                const e = normalizeEmail(email);
+                if (!e) return null;
+                const safe = escapeRegexConst(e);
+                return new RegExp(`^${safe}(?:\\.deleted\\..+)?$`, 'i');
+            };
+            const assignedRegexes = Array.from(
+                new Set([...(assistantEmails || []), requesterEmail].filter(Boolean).map((e) => normalizeEmail(e)))
+            ).map(emailToAssignedRegex).filter(Boolean);
+
+            if (assistantEmails.length > 0) roleMatch.push({ assignedTo: { $in: assistantEmails } });
+            if (assignedRegexes.length > 0) {
+                roleMatch.push({ assignedTo: { $in: assignedRegexes } });
+                roleMatch.push({ assignedBy: { $in: assignedRegexes } });
+            }
+            if (requesterEmail) {
+                roleMatch.push({ obManagerEmail: requesterEmail });
+                roleMatch.push({ assignedTo: requesterEmail });
+                roleMatch.push({ assignedBy: requesterEmail });
+                const r = emailToAssignedRegex(requesterEmail);
+                if (r) {
+                    roleMatch.push({ assignedTo: r });
+                    roleMatch.push({ assignedBy: r });
+                }
+            }
+            if (roleMatch.length === 0) {
+                return res.json({ success: true, jobId: null, status: 'empty_scope' });
+            }
+        } else if (requesterRole === 'manager' || requesterRole === 'md_manager') {
+            const requesterId = safeObjectIdString(req.user?.id || req.user?._id || req.user?.userId);
+            let requesterCompany = (req.user?.companyName || '').toString().trim();
+            if (!requesterCompany && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+                const doc = await User.findById(requesterId).select('companyName').lean();
+                requesterCompany = (doc?.companyName || '').toString().trim();
+            }
+            const escapeRegexConst = (v) => String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const companySafe = requesterCompany ? escapeRegexConst(requesterCompany) : '';
+            const teamRoleRegex = /^(md_manager|manager|assistant|assistance|assistence|sub[_-]?assistance|sub[_-]?assistence|sub[_-]?assist|sub[_-]?assistant)$/i;
+
+            const teamDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $regex: teamRoleRegex }
+                }).select('email').lean()
+                : [];
+            const teamEmails = (teamDocs || []).map((u) => normalizeEmail(u?.email)).filter(Boolean);
+
+            const obManagerDocs = companySafe
+                ? await User.find({
+                    companyName: { $regex: `^${companySafe}$`, $options: 'i' },
+                    role: { $regex: /^ob_manager$/i }
+                }).select('email').lean()
+                : [];
+            const obManagerEmails = (obManagerDocs || []).map((u) => normalizeEmail(u?.email)).filter(Boolean);
+
+            const scope = await resolveTaskScopeEmails(req.user);
+            const scopeEmails = Array.from(new Set([...Array.from(scope), ...teamEmails, ...obManagerEmails, requesterEmail].filter(Boolean)));
+
+            if (scopeEmails.length === 0) {
+                return res.json({ success: true, jobId: null, status: 'empty_scope' });
+            }
+            roleMatch = [
+                { assignedTo: { $in: scopeEmails } },
+                { assignedBy: { $in: scopeEmails } }
+            ];
+        } else {
+            roleMatch = [
+                { assignedTo: requesterEmail },
+                { assignedBy: requesterEmail }
+            ];
+        }
+
+        if (roleMatch.length > 0) {
+            match.$or = roleMatch;
+        }
+
+        const job = await backgroundQueue.add('analysis_report_fetch', { match });
+        
+        return res.status(200).json({
+            success: true,
+            jobId: job.id,
+            message: 'Report generation started.'
+        });
+    } catch (error) {
+        console.error('Request custom analysis error:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.getCustomAnalysisReportStatus = async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const redisClient = require('../utils/redisClient');
+        if (!redisClient || !backgroundQueue) {
+            return res.status(503).json({ success: false, message: 'Redis/Background queue not available' });
+        }
+
+        const rawData = await redisClient.get(`analysis_report:${jobId}`);
+        if (rawData) {
+            return res.status(200).json({
+                success: true,
+                status: 'completed',
+                data: JSON.parse(rawData)
+            });
+        }
+
+        const job = await backgroundQueue.getJob(jobId);
+        if (!job) {
+            return res.status(404).json({ success: false, status: 'not_found', message: 'Job not found or expired.' });
+        }
+
+        const isFailed = await job.isFailed();
+        if (isFailed) {
+            return res.status(200).json({ success: true, status: 'failed', errorMessage: job.failedReason });
+        }
+
+        const isCompleted = await job.isCompleted();
+        if (isCompleted) {
+            const d = await redisClient.get(`analysis_report:${jobId}`);
+            if (d) return res.status(200).json({ success: true, status: 'completed', data: JSON.parse(d) });
+            return res.status(200).json({ success: true, status: 'completed', data: null, message: 'Result expired from cache.'});
+        }
+
+        return res.status(200).json({ success: true, status: 'processing' });
+    } catch (error) {
+        console.error('Get analysis status error:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+};

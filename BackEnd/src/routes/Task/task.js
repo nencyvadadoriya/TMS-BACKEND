@@ -18,6 +18,8 @@ const {
     submitTaskReview,
     getAssignedByMeTasks,
     getAssignedToMeTasks,
+    requestCustomAnalysisReport,
+    getCustomAnalysisReportStatus,
 } = require("../../Controller/task.controller");
 const authMiddleware = require("../../middleware/auth.middleware");
 const { requireAdminOrManager, requireRoles } = require("../../middleware/role.middleware");
@@ -61,6 +63,10 @@ router.get('/reviews', authMiddleware, getTaskReviews);
 router.get('/assigned-to-me', authMiddleware, getAssignedToMeTasks);
 router.get('/assigned-by-me', authMiddleware, getAssignedByMeTasks);
 router.post('/:id/review', authMiddleware, submitTaskReview);
+
+// Analysis worker endpoints
+router.post('/custom-report', authMiddleware, requestCustomAnalysisReport);
+router.get('/custom-report/:jobId', authMiddleware, getCustomAnalysisReportStatus);
 
 // Task comments routes
 router.post('/:taskId/comments', authMiddleware, addTaskComment);
