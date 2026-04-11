@@ -427,21 +427,9 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
     }
 
     if (reqRole === 'md_manager') {
-        const adminLikeTarget = targetRole === 'super_admin' || targetRole === 'admin' || targetRole === 'ob_manager' || targetRole === 'sbm' || targetRole === 'rm' || targetRole === 'am';
-        if (adminLikeTarget) return false;
-
-        // Allow MD Manager to manage users in their own company (md_manager, manager, troubleshoot_manager, assistant, etc.)
-        try {
-            const [requester, targetDoc] = await Promise.all([
-                User.findById(reqId).select('companyName company').lean().catch(() => null),
-                User.findById(targetId).select('companyName company').lean().catch(() => null),
-            ]);
-            const requesterCompany = String(requester?.companyName || requester?.company || '').trim().toLowerCase().replace(/\s+/g, ' ');
-            const targetCompany = String(targetDoc?.companyName || targetDoc?.company || '').trim().toLowerCase().replace(/\s+/g, ' ');
-            if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
-        } catch {
-            // ignore
-        }
+        // MD Manager should be able to manage anyone except super_admin
+        if (targetRole === 'super_admin') return false;
+        return true;
     }
 
     if (reqRole === 'ob_manager') {
@@ -1622,12 +1610,7 @@ exports.deleteUser = async (req, res) => {
             });
         }
 
-        if (requesterRoleKey === 'md_manager' && normalizeRoleKey(userToDelete.role) === 'md_manager') {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. MD Manager cannot delete another MD Manager.'
-            });
-        }
+
 
         const originalEmail = (userToDelete.email || '').toString().trim().toLowerCase();
         const tombstoneEmail = originalEmail
