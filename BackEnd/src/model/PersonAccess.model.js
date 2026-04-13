@@ -37,6 +37,19 @@ const PersonAccessSchema = new mongoose.Schema({
     default: [],
     trim: true,
   },
+  // Card visibility flags — set by md_manager via MD Impex Access page
+  showEmployeeOfMonth: {
+    type: Boolean,
+    default: false,
+  },
+  showPowerStar: {
+    type: Boolean,
+    default: false,
+  },
+  showMonthlyRanking: {
+    type: Boolean,
+    default: false,
+  },
   companyName: {
     type: String,
     required: true,

@@ -368,6 +368,9 @@ exports.getAllPersonAccess = async (req, res) => {
         allowedAssignees: (p.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(p.allowedTaskTypes) ? p.allowedTaskTypes : [],
         allowedBrands: Array.isArray(p.allowedBrands) ? p.allowedBrands : [],
+        showEmployeeOfMonth: Boolean(p.showEmployeeOfMonth),
+        showPowerStar: Boolean(p.showPowerStar),
+        showMonthlyRanking: Boolean(p.showMonthlyRanking),
         createdAt: p.createdAt,
         updatedAt: p.updatedAt
       })),
@@ -383,6 +386,58 @@ exports.getAllPersonAccess = async (req, res) => {
   }
 };
 
+// Public: get users selected for Marketer-of-Month / Power-Star-of-Month cards
+exports.getMonthlyCardUsers = async (req, res) => {
+  try {
+    const records = await PersonAccess.find({
+      companyName: 'MD Impex',
+      $or: [
+        { showEmployeeOfMonth: true },
+        { showPowerStar: true },
+        { showMonthlyRanking: true }
+      ]
+    }).lean();
+
+    // Enrich with full user details
+    const emails = records.map(r => r.assignedToEmail).filter(Boolean);
+    const users = await User.find({ email: { $in: emails } })
+      .select('name email role position avatar companyName')
+      .lean();
+
+    const userMap = new Map();
+    users.forEach(u => userMap.set(normalizeEmail(u.email), u));
+
+    const enrich = (record) => {
+      const u = userMap.get(normalizeEmail(record.assignedToEmail)) || {};
+      return {
+        email: record.assignedToEmail,
+        name: record.assignedToName || u.name || '',
+        role: record.assignedToRole || u.role || '',
+        position: u.position || '',
+        avatar: u.avatar || '',
+        companyName: u.companyName || 'MD Impex',
+      };
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        marketerOfMonth: records.filter(r => r.showEmployeeOfMonth).map(enrich),
+        powerStar: records.filter(r => r.showPowerStar).map(enrich),
+        monthlyRanking: records.filter(r => r.showMonthlyRanking).map(enrich),
+      },
+      message: 'Monthly card users fetched successfully'
+    });
+  } catch (err) {
+    console.error('[MdImpexAccess] getMonthlyCardUsers error:', err);
+    return res.status(500).json({
+      success: false,
+      data: { marketerOfMonth: [], powerStar: [], monthlyRanking: [] },
+      message: err?.message || 'Failed to fetch monthly card users'
+    });
+  }
+};
+
 // Create person-wise access
 exports.createPersonAccess = async (req, res) => {
   try {
@@ -392,7 +447,10 @@ exports.createPersonAccess = async (req, res) => {
       accessRole,
       allowedAssignees = [],
       allowedTaskTypes = [],
-      allowedBrands = []
+      allowedBrands = [],
+      showEmployeeOfMonth = false,
+      showPowerStar = false,
+      showMonthlyRanking = false
     } = req.body || {};
 
     console.log('[DEBUG] createPersonAccess received:', { assignedToEmail, assignedToRole, accessRole, allowedAssignees, allowedTaskTypes });
@@ -446,6 +504,9 @@ exports.createPersonAccess = async (req, res) => {
       allowedAssignees: resolvedAllowedAssigneeIds,
       allowedTaskTypes: Array.from(new Set(normalizedAllowedTaskTypes)),
       allowedBrands: Array.from(new Set(normalizedAllowedBrands)),
+      showEmployeeOfMonth: Boolean(showEmployeeOfMonth),
+      showPowerStar: Boolean(showPowerStar),
+      showMonthlyRanking: Boolean(showMonthlyRanking),
       companyName: 'MD Impex',
       createdBy
     });
@@ -462,6 +523,9 @@ exports.createPersonAccess = async (req, res) => {
         allowedAssignees: (newPersonAccess.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(newPersonAccess.allowedTaskTypes) ? newPersonAccess.allowedTaskTypes : [],
         allowedBrands: Array.isArray(newPersonAccess.allowedBrands) ? newPersonAccess.allowedBrands : [],
+        showEmployeeOfMonth: Boolean(newPersonAccess.showEmployeeOfMonth),
+        showPowerStar: Boolean(newPersonAccess.showPowerStar),
+        showMonthlyRanking: Boolean(newPersonAccess.showMonthlyRanking),
         createdAt: newPersonAccess.createdAt
       },
       message: 'Person access created successfully'
@@ -486,7 +550,15 @@ exports.createPersonAccess = async (req, res) => {
 exports.updatePersonAccess = async (req, res) => {
   try {
     const { id } = req.params;
-    const { accessRole, allowedAssignees = [], allowedTaskTypes = [], allowedBrands = [] } = req.body || {};
+    const {
+      accessRole,
+      allowedAssignees = [],
+      allowedTaskTypes = [],
+      allowedBrands = [],
+      showEmployeeOfMonth,
+      showPowerStar,
+      showMonthlyRanking
+    } = req.body || {};
 
     if (!id) {
       return res.status(400).json({
@@ -522,6 +594,11 @@ exports.updatePersonAccess = async (req, res) => {
       : [];
     updateData.allowedBrands = Array.from(new Set(normalizedAllowedBrands));
 
+    // Persist card-visibility flags only when explicitly provided in the request body
+    if (showEmployeeOfMonth !== undefined) updateData.showEmployeeOfMonth = Boolean(showEmployeeOfMonth);
+    if (showPowerStar !== undefined) updateData.showPowerStar = Boolean(showPowerStar);
+    if (showMonthlyRanking !== undefined) updateData.showMonthlyRanking = Boolean(showMonthlyRanking);
+
     const updated = await PersonAccess.findByIdAndUpdate(
       id,
       {
@@ -550,6 +627,9 @@ exports.updatePersonAccess = async (req, res) => {
         allowedAssignees: (updated.allowedAssignees || []).map((v) => v?.toString?.() || String(v)),
         allowedTaskTypes: Array.isArray(updated.allowedTaskTypes) ? updated.allowedTaskTypes : [],
         allowedBrands: Array.isArray(updated.allowedBrands) ? updated.allowedBrands : [],
+        showEmployeeOfMonth: Boolean(updated.showEmployeeOfMonth),
+        showPowerStar: Boolean(updated.showPowerStar),
+        showMonthlyRanking: Boolean(updated.showMonthlyRanking),
         updatedAt: updated.updatedAt
       },
       message: 'Person access updated successfully'

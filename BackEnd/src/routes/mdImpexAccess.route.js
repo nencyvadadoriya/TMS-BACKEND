@@ -31,4 +31,8 @@ router.post('/person-access', auth, requireRoles('md_manager', 'admin'), mdImpex
 router.patch('/person-access/:id', auth, requireRoles('md_manager', 'admin'), mdImpexAccessController.updatePersonAccess);
 router.delete('/person-access/:id', auth, requireRoles('md_manager', 'admin'), mdImpexAccessController.deletePersonAccess);
 
+// Public read-only: which users are selected for Marketer-of-Month / Power-Star cards
+// Any authenticated user can call this — needed by display pages
+router.get('/monthly-card-users', auth, mdImpexAccessController.getMonthlyCardUsers);
+
 module.exports = router;
