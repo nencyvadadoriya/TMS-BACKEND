@@ -30,6 +30,24 @@ const meetingSchema = new mongoose.Schema({
     description: {
         type: String,
         trim: true
+    },
+    isZoomMeeting: {
+        type: Boolean,
+        default: false
+    },
+    zoomMeetingId: {
+        type: String
+    },
+    zoomJoinUrl: {
+        type: String
+    },
+    zoomPassword: {
+        type: String
+    },
+    status: {
+        type: String,
+        enum: ['scheduled', 'completed'],
+        default: 'scheduled'
     }
 }, { timestamps: true });
 

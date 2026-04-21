@@ -2248,8 +2248,10 @@ exports.getAllTasks = async (req, res) => {
 
         let match = { 
             isDeleted: { $ne: true },
-            completedApproval: { $ne: true },
-            createdAt: { $gte: twoMonthsAgo }
+            $or: [
+                { completedApproval: { $ne: true } },
+                { createdAt: { $gte: twoMonthsAgo } }
+            ]
         };
         let roleMatch = [];
 
@@ -8801,8 +8803,10 @@ exports.getAssignedByMeTasks = async (req, res) => {
         const match = { 
             assignedBy: requesterEmail,
             isDeleted: { $ne: true },
-            completedApproval: { $ne: true },
-            createdAt: { $gte: twoMonthsAgo }
+            $or: [
+                { completedApproval: { $ne: true } },
+                { createdAt: { $gte: twoMonthsAgo } }
+            ]
         };
 
         const [tasks, total] = await Promise.all([
@@ -8855,8 +8859,10 @@ exports.getAssignedToMeTasks = async (req, res) => {
         const match = { 
             assignedTo: requesterEmail,
             isDeleted: { $ne: true },
-            completedApproval: { $ne: true },
-            createdAt: { $gte: twoMonthsAgo }
+            $or: [
+                { completedApproval: { $ne: true } },
+                { createdAt: { $gte: twoMonthsAgo } }
+            ]
         };
 
         const [tasks, total] = await Promise.all([

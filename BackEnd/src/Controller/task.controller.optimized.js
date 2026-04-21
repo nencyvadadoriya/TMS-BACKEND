@@ -2,7 +2,7 @@
 const mongoose = require('mongoose');
 const Task = require('../model/Task.model');
 const Brand = require('../model/Brand.model');
-const User = require('../model/User.model');
+const User = require('../model/user.model');
 const Comment = require('../model/Comment.model');
 const TaskHistory = require('../model/TaskHistory.model');
 const { createTaskCalendarInvite, refreshAccessToken, updateGoogleTask, deleteGoogleTask } = require('../utils/googleCalendar.util');
@@ -49,8 +49,10 @@ const getAllTasksOptimized = async (req, res) => {
         // Base match conditions
         const baseMatch = {
             isDeleted: { $ne: true },
-            completedApproval: { $ne: true },
-            createdAt: { $gte: twoMonthsAgo }
+            $or: [
+                { completedApproval: { $ne: true } },
+                { createdAt: { $gte: twoMonthsAgo } }
+            ]
         };
 
         // Pre-compute user scope for performance
