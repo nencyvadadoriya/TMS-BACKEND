@@ -17,7 +17,7 @@ const { _getEffectivePermissionsMap } = require('./access.controller');
 const { emitUserUpserted, emitUserDeleted } = require('../realtime/userEvents');
 
 const normalizeRole = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-const normalizeRoleKey = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+const normalizeRoleKey = (value) => String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '_');
 
 const ROLE_PARENTS = {
     admin: ['super_admin'],
@@ -51,6 +51,8 @@ const ROLE_DISPLAY_NAMES = {
     am: 'AM',
     troubleshoot_manager: 'Troubleshoot Manager',
     marketer_manager: 'Marketer Manager',
+    sales_manager: 'Sales Manager',
+    sales_man: 'Sales Man',
 };
 
 const toObjectIdString = (value) => {
