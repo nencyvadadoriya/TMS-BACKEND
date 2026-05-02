@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 const Meeting = require('../model/Meeting.model');
+const zoomService = require('../services/zoom.service');
 
 const normalizeText = (v) => (v == null ? '' : String(v)).trim();
 const normalizeEmail = (v) => normalizeText(v).toLowerCase();
 
 exports.createMeeting = async (req, res, next) => {
     try {
-        const { meetingName, startTime, endTime, participants, description } = req.body;
+        const { meetingName, startTime, endTime, participants, description, isZoomMeeting } = req.body;
         const createdByRaw = req.user?.id || req.user?._id;
 
         if (!createdByRaw || !mongoose.Types.ObjectId.isValid(createdByRaw)) {
@@ -41,8 +42,33 @@ exports.createMeeting = async (req, res, next) => {
             duration,
             createdBy: new mongoose.Types.ObjectId(createdByRaw),
             participants: safeParticipants,
-            description: description || ''
+            description: description || '',
+            isZoomMeeting: !!isZoomMeeting
         });
+
+        if (isZoomMeeting) {
+            try {
+                const zoomMeeting = await zoomService.createZoomMeeting({
+                    meetingName,
+                    startTime: start.toISOString(),
+                    duration,
+                    description: description || ''
+                });
+                meeting.zoomMeetingId = zoomMeeting.id;
+                meeting.zoomJoinUrl = zoomMeeting.joinUrl;
+                meeting.zoomPassword = zoomMeeting.password;
+            } catch (zoomError) {
+                console.error('Failed to create Zoom meeting:', zoomError);
+                // We proceed with saving the local meeting, but notify the user?
+                // Or should we fail? Given the UI, we might want to fail or just mark it as failed zoom.
+                // For now, let's return error to be safe.
+                return res.status(500).json({ 
+                    success: false, 
+                    message: 'Failed to create Zoom meeting',
+                    details: zoomError.message
+                });
+            }
+        }
 
         await meeting.save();
 
@@ -136,6 +162,48 @@ exports.updateMeeting = async (req, res, next) => {
     }
 };
 
+exports.endMeeting = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user?.id || req.user?._id;
+        const userRole = req.user?.role?.toLowerCase();
+
+        const meeting = await Meeting.findById(id);
+        if (!meeting) {
+            return res.status(404).json({ success: false, message: 'Meeting not found' });
+        }
+
+        // Only creator or admin can end
+        if (meeting.createdBy.toString() !== userId.toString() && userRole !== 'admin' && userRole !== 'super_admin') {
+            return res.status(403).json({ success: false, message: 'Unauthorized to end this meeting' });
+        }
+
+        if (meeting.status === 'completed') {
+            return res.status(400).json({ success: false, message: 'Meeting is already completed' });
+        }
+
+        if (meeting.isZoomMeeting && meeting.zoomMeetingId) {
+            try {
+                await zoomService.endZoomMeeting(meeting.zoomMeetingId);
+            } catch (zoomError) {
+                console.error('Failed to end Zoom meeting:', zoomError);
+                // We still proceed to mark local meeting as completed
+            }
+        }
+
+        meeting.status = 'completed';
+        await meeting.save();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Meeting ended successfully',
+            data: meeting
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || 'Failed to end meeting' });
+    }
+};
+
 exports.deleteMeeting = async (req, res, next) => {
     try {
         const { id } = req.params;
@@ -150,6 +218,15 @@ exports.deleteMeeting = async (req, res, next) => {
         // Only creator or admin can delete
         if (meeting.createdBy.toString() !== userId.toString() && userRole !== 'admin' && userRole !== 'super_admin') {
             return res.status(403).json({ success: false, message: 'Unauthorized to delete this meeting' });
+        }
+
+        if (meeting.isZoomMeeting && meeting.zoomMeetingId) {
+            try {
+                await zoomService.deleteZoomMeeting(meeting.zoomMeetingId);
+            } catch (zoomError) {
+                console.error('Failed to delete Zoom meeting:', zoomError);
+                // We still delete the local meeting
+            }
         }
 
         await Meeting.findByIdAndDelete(id);
