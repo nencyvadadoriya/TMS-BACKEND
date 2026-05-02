@@ -35,10 +35,6 @@ const ROLE_PARENTS = {
     marketer_manager: ['md_manager', 'admin', 'super_admin'],
 };
 
-
-
-
-// Display names for roles (stored in DB instead of keys)
 const ROLE_DISPLAY_NAMES = {
     admin: 'Admin',
     md_manager: 'MD Manager',
@@ -55,6 +51,19 @@ const ROLE_DISPLAY_NAMES = {
     sales_man: 'Sales Man',
 };
 
+const ROLE_CANONICAL_KEYS = new Set(Object.keys(ROLE_DISPLAY_NAMES));
+
+const toRoleKey = (value) => {
+    const k = normalizeRoleKey(value);
+    if (ROLE_CANONICAL_KEYS.has(k)) return k;
+    const norm = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    for (const [key, label] of Object.entries(ROLE_DISPLAY_NAMES)) {
+        const lab = String(label || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        if (lab && norm === lab) return key;
+    }
+    return k;
+};
+
 const toObjectIdString = (value) => {
     if (!value) return '';
     if (typeof value === 'string') return value.trim();
@@ -65,13 +74,11 @@ const toObjectIdString = (value) => {
 const normalizeCompanyName = (value) => (value || '').toString().trim();
 
 const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) => {
-    // Makes AM's brand/taskType mapping follow the new RM and removes stale mappings from the old RM.
     const safeAmId = toObjectIdString(amId);
     const safeNewRmId = toObjectIdString(newRmId);
     if (!mongoose.Types.ObjectId.isValid(safeAmId)) return;
     if (!mongoose.Types.ObjectId.isValid(safeNewRmId)) return;
 
-    // Fetch current mappings
     const [amMappings, rmMappings] = await Promise.all([
         UserBrandTaskType.find({ userId: safeAmId }).select('_id companyName brandId taskTypeIds').lean(),
         UserBrandTaskType.find({ userId: safeNewRmId }).select('_id companyName brandId brandName taskTypeIds').lean(),
@@ -88,8 +95,6 @@ const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) 
         ])
     );
 
-    // Step 1: remove AM mappings that are NOT present on new RM.
-    // This is the cleanup that breaks old RM/AM brand visibility.
     const rmKeySet = new Set(rmByKey.keys());
     const removeIds = (amMappings || [])
         .filter((m) => {
@@ -102,7 +107,6 @@ const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) 
         await UserBrandTaskType.deleteMany({ _id: { $in: removeIds } });
     }
 
-    // Step 2: ensure AM has mappings for all brands that new RM has.
     const upsertOps = [];
     for (const [key, rmRow] of rmByKey.entries()) {
         if (!rmRow) continue;
@@ -133,7 +137,6 @@ const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) 
         await UserBrandTaskType.bulkWrite(upsertOps, { ordered: false });
     }
 
-    // Step 3: recompute assignedBrandIds strictly from remaining mappings (taskTypeIds non-empty).
     const finalMappings = await UserBrandTaskType.find({ userId: safeAmId })
         .select('brandId taskTypeIds')
         .lean();
@@ -149,7 +152,6 @@ const syncAmAssignmentsOnRmChange = async ({ amId, oldRmId, newRmId, actorId }) 
     );
 };
 
-// Update AM Hierarchy (Admin/SBM only)
 exports.updateAmHierarchy = async (req, res) => {
     try {
         const requesterRole = normalizeRole(req.user?.role);
@@ -182,7 +184,6 @@ exports.updateAmHierarchy = async (req, res) => {
             return res.status(400).json({ success: false, message: 'managerId must be an RM user' });
         }
 
-        // SBM/MD Manager can only move AMs under RMs they can manage.
         if (requesterRole === 'sbm' || requesterRole === 'md_manager') {
             const canManageTarget = await canManageUserByChain({ requesterRole, requesterId, targetUser: targetAm });
             if (!canManageTarget) {
@@ -388,6 +389,7 @@ exports.removeProfileAvatar = async (req, res) => {
         });
     }
 };
+
 const isAdminLike = (role) => {
     const r = normalizeRoleKey(role);
     return r === 'admin' || r === 'super_admin';
@@ -414,12 +416,6 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 
     const targetRole = normalizeRoleKey(targetUser.role);
 
-    // Check if requester created the target user (allows creator to manage regardless of role)
-    const requesterDoc = await User.findById(reqId).select('email').lean().catch(() => null);
-    const requesterEmail = (requesterDoc?.email || '').toString().trim().toLowerCase();
-    const targetCreatedBy = (targetUser?.createdByEmail || '').toString().trim().toLowerCase();
-    if (requesterEmail && targetCreatedBy && requesterEmail === targetCreatedBy) return true;
-
     if (reqRole === 'super_admin') return true;
 
     if (reqRole === 'admin') {
@@ -429,7 +425,6 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
     }
 
     if (reqRole === 'md_manager') {
-        // MD Manager should be able to manage anyone except super_admin
         if (targetRole === 'super_admin') return false;
         return true;
     }
@@ -472,20 +467,6 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
         if (!isAssistantLike) return false;
     }
 
-    // Legacy users might have no managerId. For md_manager/ob_manager we allow deleting assistant/sub_assistance
-    // in the same company to avoid being blocked by missing chain.
-    if (!targetUser.managerId && (reqRole === 'md_manager' || reqRole === 'ob_manager') && (targetRole === 'assistant' || targetRole === 'assistance' || targetRole === 'assistence' || targetRole === 'assistece' || targetRole === 'sub_assistance' || targetRole === 'sub_assistence' || targetRole === 'sub_assistece' || targetRole === 'sub_assist' || targetRole === 'sub_assistant')) {
-        try {
-            const requester = await User.findById(reqId).select('companyName company').lean();
-            const requesterCompany = (requester?.companyName || requester?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-            const targetCompany = (targetUser?.companyName || targetUser?.company || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-            if (requesterCompany && targetCompany && requesterCompany === targetCompany) return true;
-        } catch {
-            // ignore
-        }
-        return false;
-    }
-
     let currentManagerId = targetUser.managerId;
     for (let i = 0; i < 6; i++) {
         if (!currentManagerId) return false;
@@ -500,14 +481,13 @@ const canManageUserByChain = async ({ requesterRole, requesterId, targetUser }) 
 };
 
 const validateParentForRole = ({ childRole, parentRole }) => {
-    const c = normalizeRole(childRole);
-    const p = normalizeRole(parentRole);
+    const c = normalizeRoleKey(childRole);
+    const p = normalizeRoleKey(parentRole);
     const allowedParents = ROLE_PARENTS[c] || [];
     if (!Array.isArray(allowedParents) || allowedParents.length === 0) return false;
     return allowedParents.includes(p);
 };
 
-// Register user
 exports.registerUser = async (req, res) => {
     try {
         const { name, email, password } = req.body;
@@ -518,7 +498,7 @@ exports.registerUser = async (req, res) => {
                 message: 'Name, email and password are required'
             });
         }
-        // Check if user exists
+
         const existUser = await User.findOne({ email });
         if (existUser) {
             return res.status(400).json({
@@ -527,10 +507,8 @@ exports.registerUser = async (req, res) => {
             });
         }
 
-        // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Create new user
         const newUser = new User({
             name,
             email,
@@ -592,7 +570,6 @@ exports.registerUser = async (req, res) => {
     }
 };
 
-// Login user
 exports.loginUser = async (req, res) => {
     try {
         const email = (req.body?.email || '').toString().trim().toLowerCase();
@@ -604,7 +581,7 @@ exports.loginUser = async (req, res) => {
                 msg: 'Email and password are required'
             });
         }
-        // Find user
+
         const user = await User.findOne({ email });
         if (!user) {
             return res.status(400).json({
@@ -613,7 +590,6 @@ exports.loginUser = async (req, res) => {
             });
         }
 
-        // Check password
         const matchPassword = await bcrypt.compare(password, user.password);
         if (!matchPassword) {
             return res.status(400).json({
@@ -622,7 +598,6 @@ exports.loginUser = async (req, res) => {
             });
         }
 
-        // Create token
         const token = jwt.sign(
             {
                 id: String(user._id || ''),
@@ -633,10 +608,9 @@ exports.loginUser = async (req, res) => {
             process.env.JWT_SECRET || 'secret',
             { expiresIn: '24h' }
         );
-        // Remove password from response
+
         user.password = undefined;
 
-        // Send consistent response format
         res.status(200).json({
             error: false,
             msg: 'Login successful',
@@ -664,7 +638,6 @@ exports.loginUser = async (req, res) => {
     }
 };
 
-// Forget Password (with better debugging)
 exports.forgetPassword = async (req, res) => {
     try {
         const { email } = req.body;
@@ -689,13 +662,11 @@ exports.forgetPassword = async (req, res) => {
 
         console.log(`✅ User found: ${user.email} (${user.name})`);
 
-        // Generate OTP
         const OTP = Math.floor(100000 + Math.random() * 900000);
-        const otpExpiry = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
+        const otpExpiry = new Date(Date.now() + 2 * 60 * 1000);
 
         console.log(`🔢 Generated OTP: ${OTP} (expires: ${otpExpiry.toLocaleTimeString()})`);
 
-        // Save OTP to database
         user.resetOtp = OTP;
         user.otpExpiry = otpExpiry;
         user.updatedAt = new Date();
@@ -703,7 +674,6 @@ exports.forgetPassword = async (req, res) => {
         await user.save();
         console.log('✅ OTP saved to database');
 
-        // Attempt to send email
         let emailSent = false;
         let emailError = null;
 
@@ -722,7 +692,6 @@ exports.forgetPassword = async (req, res) => {
             console.error('❌ Exception in sendOtpEmail:', err.message);
         }
 
-        // Determine response based on email status
         if (emailSent) {
             return res.status(200).json({
                 error: false,
@@ -762,7 +731,6 @@ exports.verifyOtp = async (req, res) => {
     try {
         const { email, OTP } = req.body;
 
-        // Find user
         const user = await User.findOne({ email });
         if (!user) {
             return res.status(400).json({
@@ -771,7 +739,6 @@ exports.verifyOtp = async (req, res) => {
             });
         }
 
-        // Check if OTP exists
         if (!user.resetOtp) {
             return res.status(400).json({
                 error: true,
@@ -779,7 +746,6 @@ exports.verifyOtp = async (req, res) => {
             });
         }
 
-        // Check OTP expiry
         if (user.otpExpiry < new Date()) {
             return res.status(400).json({
                 error: true,
@@ -787,7 +753,6 @@ exports.verifyOtp = async (req, res) => {
             });
         }
 
-        // Verify OTP (direct comparison)
         if (user.resetOtp != OTP) {
             return res.status(400).json({
                 error: true,
@@ -795,7 +760,6 @@ exports.verifyOtp = async (req, res) => {
             });
         }
 
-        // Clear OTP after verification
         user.resetOtp = null;
         user.otpExpiry = null;
         await user.save();
@@ -815,7 +779,6 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
-// Change password
 exports.changePassword = async (req, res) => {
     try {
         const { email, newPassword } = req.body;
@@ -828,7 +791,6 @@ exports.changePassword = async (req, res) => {
             });
         }
 
-        // Hash new password
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         user.password = hashedPassword;
         user.updatedAt = new Date();
@@ -849,7 +811,6 @@ exports.changePassword = async (req, res) => {
     }
 };
 
-// Get all users
 exports.getAllUsers = async (req, res) => {
     try {
         const requesterRole = normalizeRole(req.user?.role);
@@ -859,10 +820,7 @@ exports.getAllUsers = async (req, res) => {
 
         let query = {};
 
-
-
         if (['super_admin', 'admin', 'sbm', 'rm', 'am', 'troubleshoot_manager'].includes(requesterRole)) {
-
             query = {};
         } else if (requesterRole === 'sales_manager') {
             const requester = await User.findById(requesterId)
@@ -927,27 +885,16 @@ exports.getAllUsers = async (req, res) => {
 
             query = { _id: { $in: ids } };
             if (companySafe) {
-
                 query = {
-
                     $or: [
-
                         { companyName: { $regex: `^${companySafe}$`, $options: 'i' } },
-
                         { company: { $regex: `^${companySafe}$`, $options: 'i' } },
-
                         { _id: requesterId }
-
                     ]
-
                 };
-
             } else {
-
                 query = { _id: requesterId };
-
             }
-
         } else if (requesterRole === 'manager' || requesterRole === 'marketer_manager') {
             query = {
                 $or: [
@@ -988,9 +935,8 @@ exports.getAllUsers = async (req, res) => {
             query = { _id: requesterId };
         }
 
-        // Pagination support
         const page = parseInt(req.query?.page) || 1;
-        const limit = parseInt(req.query?.limit) || 1000; // default to 1000 to remain backward compatible if no limit is passed initially
+        const limit = parseInt(req.query?.limit) || 1000;
         const skip = (page - 1) * limit;
 
         const [users, total] = await Promise.all([
@@ -1046,7 +992,6 @@ exports.currentUser = async (req, res) => {
             });
         }
 
-        // Safe check for name
         const userName = user.name || 'User';
         const userAvatar = user.avatar || (userName ? userName.charAt(0) : 'U');
 
@@ -1112,7 +1057,6 @@ exports.approve = async (req, res) => {
             { new: true }
         );
 
-        // History add karo
         if (completedApproval) {
             await TaskHistory.create({
                 taskId: id,
@@ -1131,10 +1075,8 @@ exports.approve = async (req, res) => {
     }
 }
 
-// Create User (Admin only)
 exports.createUser = async (req, res) => {
     try {
-        // middleware assures req.user exists
         const requesterRole = normalizeRole(req.user?.role);
         const requesterId = (req.user?.id || req.user?._id || '').toString();
         const isSuperAdmin = requesterRole === 'super_admin';
@@ -1173,7 +1115,7 @@ exports.createUser = async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const normalizedRole = normalizeRole(role || 'assistant');
+        const normalizedRole = toRoleKey(role || 'assistant');
         const roleHasParent = Array.isArray(ROLE_PARENTS[normalizedRole]) && ROLE_PARENTS[normalizedRole].length > 0;
         const requestedManagerId = String(req.body?.managerId || '').trim();
 
@@ -1201,14 +1143,9 @@ exports.createUser = async (req, res) => {
             });
         }
 
-
-
         if (isMdManager) {
-
             // MD Manager can create any role for MD Impex users - no restrictions
-
             // All roles are allowed including custom roles
-
         }
 
         if (isSbm && normalizedRole !== 'rm' && normalizedRole !== 'am' && normalizedRole !== 'sales_manager' && normalizedRole !== 'sales_man') {
@@ -1343,10 +1280,9 @@ exports.createUser = async (req, res) => {
             email: safeEmail,
             password: hashedPassword,
 
-            role: ROLE_DISPLAY_NAMES[normalizedRole] || normalizedRole,
+            role: normalizedRole,
 
             managerId: computedManagerId,
-            // If a manager creates an assistant, only assign what the manager explicitly selects
             assignedBrandIds: safeAssignedBrandIds,
             phone: phone || '',
             department: department || '',
@@ -1423,13 +1359,13 @@ exports.createUser = async (req, res) => {
         });
     }
 };
+
 exports.updateUser = async (req, res) => {
     try {
         const requesterRole = normalizeRole(req.user?.role);
         const requesterId = (req.user?.id || req.user?._id || '').toString();
 
         const requesterRoleKey = normalizeRoleKey(requesterRole);
-
 
         const { id } = req.params;
         const target = await User.findById(id).select('_id role managerId createdByEmail companyName company').lean();
@@ -1465,7 +1401,7 @@ exports.updateUser = async (req, res) => {
         const updates = req.body;
 
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'role')) {
-            const requestedRole = normalizeRoleKey((updates || {}).role);
+            const requestedRole = toRoleKey((updates || {}).role);
             const isSpeedEcomOperation = canAmEditRoleForSpeedEcom || canSbmEditRoleForSpeedEcom;
 
             let canSetRole = false;
@@ -1480,17 +1416,16 @@ exports.updateUser = async (req, res) => {
                 delete updates.role;
             } else {
                 if (isSpeedEcomOperation) {
-                    // AM/SBM special-case: only allow updating role; strip other fields for safety.
                     Object.keys(updates || {}).forEach((k) => {
                         if (k !== 'role') delete updates[k];
                     });
                 }
-                updates.role = ROLE_DISPLAY_NAMES[requestedRole] || requestedRole;
+                updates.role = requestedRole;
             }
         }
 
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'managerId')) {
-            const effectiveTargetRole = normalizeRoleKey(
+            const effectiveTargetRole = toRoleKey(
                 Object.prototype.hasOwnProperty.call(updates || {}, 'role')
                     ? (updates || {}).role
                     : target?.role
@@ -1542,9 +1477,10 @@ exports.updateUser = async (req, res) => {
             { ...updates, updatedAt: new Date() },
             { new: true, runValidators: true }
         ).select('-password');
+
         try {
             const obj = updatedUser?.toObject ? updatedUser.toObject() : updatedUser;
-            console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
+            if (obj) emitUserUpserted({ ...obj, id: obj._id || obj.id });
         } catch (emitError) {
             console.error('emitUserUpserted failed:', emitError && emitError.message ? emitError.message : emitError);
         }
