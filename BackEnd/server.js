@@ -17,6 +17,7 @@ require("./src/config/db.confing");
 const { initSocket } = require("./src/realtime/socket");
 
 const { startPersonalTaskReminderScheduler } = require("./src/utils/personalTaskReminder.scheduler");
+const { startOverdueTaskScheduler } = require("./src/utils/overdueTask.scheduler");
 
 
 
@@ -221,6 +222,9 @@ server.listen(PORT, "0.0.0.0", (err) => {
   // Start personal task reminder scheduler
 
   startPersonalTaskReminderScheduler();
+  
+  // Start overdue task scheduler
+  startOverdueTaskScheduler();
 
 });
 
