@@ -1968,6 +1968,8 @@ exports.addTask = async (req, res) => {
 
 
             dueDate,
+            
+            overdueType: req.body?.overdueType || 'none',
 
 
 

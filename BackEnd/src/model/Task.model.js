@@ -83,6 +83,11 @@ const taskSchema = new mongoose.Schema({
     type: Date,
     required: [true, 'Due date is required']
   },
+  overdueType: {
+    type: String,
+    enum: ['24hours', 'custom', 'none'],
+    default: 'none'
+  },
   assignedTo: {
     type: String,
     trim: true,
