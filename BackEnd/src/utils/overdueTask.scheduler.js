@@ -10,26 +10,19 @@ const { getIO } = require('../realtime/socket');
  */
 async function checkAndMarkOverdueTasks() {
   try {
-    // 1. Get emails of users with role 'assistant' or 'sub_assistant'
-    const targetRoles = ['assistant', 'sub_assistant', 'sub-assistant'];
-    const users = await User.find({ role: { $in: targetRoles } }).select('email').lean();
-    
-    if (!users || users.length === 0) {
-      return;
-    }
-
-    const userEmails = users.map(u => u.email.toLowerCase());
-
-    // 2. Use dueDate to determine overdue status (only tasks with a dueDate)
+    // Determine current time
     const now = new Date();
+    const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    // 3. Find tasks that are not completed, reassigned, or already overdue,
-    // assigned to these users, have a dueDate set, and whose dueDate is <= now
+    // Find tasks that are not completed, reassigned, or already overdue,
+    // and match either the 24‑hour rule or the custom due date rule.
     const overdueTasks = await Task.find({
-      assignedTo: { $in: userEmails },
       status: { $nin: ['completed', 'overdue', 'reassigned'] },
       isDeleted: false,
-      dueDate: { $exists: true, $ne: null, $lte: now }
+      $or: [
+        { overdueType: '24hours', createdAt: { $lte: cutoff24h } },
+        { overdueType: 'custom', dueDate: { $exists: true, $ne: null, $lte: now } }
+      ]
     });
 
     if (overdueTasks.length === 0) {
