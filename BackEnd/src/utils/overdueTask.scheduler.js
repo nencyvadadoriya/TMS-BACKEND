@@ -20,16 +20,16 @@ async function checkAndMarkOverdueTasks() {
 
     const userEmails = users.map(u => u.email.toLowerCase());
 
-    // 2. Define the threshold: 24 hours ago
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    // 2. Use dueDate to determine overdue status (only tasks with a dueDate)
+    const now = new Date();
 
-    // 3. Find tasks that are not completed, reassigned, or already overdue, 
-    // assigned to these users, and created more than 24 hours ago
+    // 3. Find tasks that are not completed, reassigned, or already overdue,
+    // assigned to these users, have a dueDate set, and whose dueDate is <= now
     const overdueTasks = await Task.find({
       assignedTo: { $in: userEmails },
       status: { $nin: ['completed', 'overdue', 'reassigned'] },
-      createdAt: { $lte: twentyFourHoursAgo },
-      isDeleted: false
+      isDeleted: false,
+      dueDate: { $exists: true, $ne: null, $lte: now }
     });
 
     if (overdueTasks.length === 0) {
